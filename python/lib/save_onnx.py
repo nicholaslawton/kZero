@@ -116,6 +116,7 @@ def save_onnx_inner(
             output_names=output_names,
             dynamic_axes={k: batch_axis for k in input_names + output_names},
             opset_version=10,
+            dynamo=False,
         )
 
     # move the network back to the original device
