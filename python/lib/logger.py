@@ -24,7 +24,7 @@ class Logger:
     def start_batch(self):
         self.curr_batch += 1
         for a in self.data.values():
-            a.append(np.NaN)
+            a.append(np.nan)
 
     def log(self, group: str, name: str, value):
         assert self.curr_batch >= 0, "No batch has been started yet"
@@ -33,7 +33,7 @@ class Logger:
         if key in self.data:
             a = self.data[key]
         else:
-            a = GrowableArray(initial_values=np.full(self.curr_batch + 1, np.NaN))
+            a = GrowableArray(initial_values=np.full(self.curr_batch + 1, np.nan))
             self.data[key] = a
 
         assert np.isnan(a[self.curr_batch]), f"Key {key} was already logged during this batch"

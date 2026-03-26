@@ -4,7 +4,7 @@ import numpy as np
 class GrowableArray:
     def __init__(self, initial_values=None):
         if initial_values is None:
-            self._values = np.full(1, np.NaN)
+            self._values = np.full(1, np.nan)
             self._next_i = 0
         else:
             assert len(initial_values.shape) == 1
@@ -30,7 +30,7 @@ class GrowableArray:
         if self._next_i + n > len(old_values):
             new_size = max(2 * len(old_values), self._next_i + n)
 
-            self._values = np.full(new_size, np.NaN)
+            self._values = np.full(new_size, np.nan)
             self._values[:len(old_values)] = old_values
 
     def append(self, value):
