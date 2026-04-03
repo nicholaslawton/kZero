@@ -280,5 +280,8 @@ GAMES = {
         encode_mv=None,
         possible_mvs=range(1 + 6 + 256),
         symmetry=UnitSymmetry(),
-    )
+    ),
 }
+
+from lib.oriflambe import ORIFLAMBE_GAME
+GAMES["oriflambe"] = ORIFLAMBE_GAME

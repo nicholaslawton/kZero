@@ -10,6 +10,7 @@ pub mod ataxx;
 pub mod bit_buffer;
 pub mod chess;
 pub mod go;
+pub mod oriflambe;
 pub mod sttt;
 pub mod ttt;
 

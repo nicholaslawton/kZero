@@ -14,3 +14,8 @@ python/ignored/
 
 # main data folder
 /data/
+
+# Symlinks to external game implementations
+rust/kz-core/src/mapping/oriflambe.rs
+python/lib/oriflambe.py
+python/main/train_oriflambe.py

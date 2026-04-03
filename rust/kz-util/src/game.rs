@@ -9,6 +9,7 @@ pub enum Game {
     Ataxx { size: u8 },
     ArimaaSplit,
     Go { size: u8 },
+    Oriflambe,
 }
 
 impl Game {
@@ -19,6 +20,7 @@ impl Game {
             "chess" => return Some(Game::Chess),
             "ataxx" => return Some(Game::Ataxx { size: 7 }),
             "arimaa-split" => return Some(Game::ArimaaSplit),
+            "oriflambe" => return Some(Game::Oriflambe),
             _ => {}
         };
 
@@ -49,6 +51,7 @@ impl Display for Game {
             Game::Ataxx { size } => write!(f, "ataxx-{}", size),
             Game::ArimaaSplit => write!(f, "arimaa-split"),
             Game::Go { size } => write!(f, "go-{}", size),
+            Game::Oriflambe => write!(f, "oriflambe"),
         }
     }
 }
