@@ -54,6 +54,7 @@ kn-runtime = "0.7.4"
 #kn-cuda-eval = { path = "../../Kyanite/kn-cuda-eval" }
 
 # crates.io depedencies
+hexx = "0.24"
 anyhow = "1.0.75"
 async-trait = "0.1.73"
 bindgen = "0.68.1"
