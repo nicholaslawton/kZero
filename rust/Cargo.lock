@@ -1396,6 +1396,7 @@ dependencies = [
  "decorum",
  "flume",
  "futures",
+ "glam",
  "hexx",
  "internal-iterator",
  "itertools 0.11.0",
