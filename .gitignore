@@ -19,3 +19,5 @@ python/ignored/
 rust/kz-core/src/mapping/oriflambe
 python/lib/oriflambe.py
 python/main/train_oriflambe.py
+
+rust/kz-core/proptest-regressions/
