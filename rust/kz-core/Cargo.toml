@@ -19,6 +19,8 @@ kn-runtime.workspace = true
 board-game.workspace = true
 hexx.workspace = true
 glam.workspace = true
+proptest.workspace = true
+proptest-derive.workspace = true
 
 # TODO remove shakmaty and corresponding oracle
 async-trait.workspace = true
@@ -35,3 +37,7 @@ serde.workspace = true
 serde_json.workspace = true
 shakmaty.workspace = true
 shakmaty-syzygy.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+proptest-derive.workspace = true
