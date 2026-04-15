@@ -9,6 +9,7 @@ muzero = []
 default = []
 
 [dependencies]
+once_cell = "1.19"
 kz-util.workspace = true
 
 kn-cuda-eval.workspace = true
