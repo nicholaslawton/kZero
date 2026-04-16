@@ -20,6 +20,8 @@ use rand::thread_rng;
 use kz_core::mapping::ataxx::AtaxxStdMapper;
 use kz_core::mapping::chess::{ChessHistoryMapper, ChessStdMapper};
 use kz_core::mapping::go::GoStdMapper;
+use kz_core::mapping::oriflambe::board::OriflambeBoard;
+use kz_core::mapping::oriflambe::std_mapper::OriflambeStdMapper;
 use kz_core::mapping::sttt::STTTStdMapper;
 use kz_core::mapping::ttt::TTTStdMapper;
 use kz_core::mapping::BoardMapper;
@@ -66,6 +68,7 @@ fn main() {
             || GoBoard::new(size, Komi::new(15), Rules::cgos()),
             GoStdMapper::new(size, true),
         ),
+        Game::Oriflambe => main_impl(&args, OriflambeBoard::default, OriflambeStdMapper),
     }
 }
 

@@ -20,6 +20,8 @@ use kz_core::mapping::arimaa::ArimaaSplitMapper;
 use kz_core::mapping::ataxx::AtaxxStdMapper;
 use kz_core::mapping::chess::{ChessHistoryMapper, ChessStdMapper};
 use kz_core::mapping::go::GoStdMapper;
+use kz_core::mapping::oriflambe::board::OriflambeBoard;
+use kz_core::mapping::oriflambe::std_mapper::OriflambeStdMapper;
 use kz_core::mapping::sttt::STTTStdMapper;
 use kz_core::mapping::ttt::TTTStdMapper;
 use kz_core::mapping::BoardMapper;
@@ -191,6 +193,18 @@ fn selfplay_start_dispatch_game(
                 startup_settings,
                 start_pos,
                 GoStdMapper::new(size, true),
+                reader,
+                writer,
+            )
+        }
+        Game::Oriflambe => {
+            assert_eq!(startup_settings.start_pos, "default");
+            selfplay_start_dispatch_spec_non_alt(
+                game,
+                devices,
+                startup_settings,
+                |_| OriflambeBoard::default(),
+                OriflambeStdMapper,
                 reader,
                 writer,
             )
