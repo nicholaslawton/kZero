@@ -21,3 +21,4 @@ python/lib/oriflambe.py
 python/main/train_oriflambe.py
 
 rust/kz-core/proptest-regressions/
+rust/kz-misc/src/bin/play_oriflambe.rs
