@@ -278,6 +278,7 @@ class LoopSettings:
                 torch.jit.save(network, gen.network_path_pt)
 
                 curr_onnx_path = self.save_tmp_onnx_network(network, f"network_{gen.gi}")
+                save_onnx(game, gen.network_path_onnx, network, None)
                 client.send_new_network(curr_onnx_path)
 
             logger.save(self.log_path)
@@ -357,6 +358,7 @@ class Generation:
     simulations_path: str
     train_path: str
     network_path_pt: str
+    network_path_onnx: str
     finished_path: str
     settings_path: str
 
@@ -371,6 +373,7 @@ class Generation:
             simulations_path=simulations_path,
             train_path=train_path,
             network_path_pt=os.path.join(train_path, "network.pt"),
+            network_path_onnx=os.path.join(train_path, "network.onnx"),
             finished_path=os.path.join(train_path, "finished.txt"),
             settings_path=os.path.join(train_path, "settings.json"),
         )
