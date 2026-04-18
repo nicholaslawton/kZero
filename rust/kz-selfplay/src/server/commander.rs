@@ -27,13 +27,18 @@ pub fn commander_main<B: Board, G>(
         let cmd = read_command(&mut reader);
 
         match cmd {
-            Command::StartupSettings(_) => panic!("Already received startup settings"),
-            Command::NewSettings(settings) => {
+            None => {
+                println!("Commander: connection closed, stopping");
+                update_sender.send(GeneratorUpdate::Stop).unwrap();
+                break;
+            }
+            Some(Command::StartupSettings(_)) => panic!("Already received startup settings"),
+            Some(Command::NewSettings(settings)) => {
                 for sender in &settings_senders {
                     sender.send(settings.clone()).unwrap();
                 }
             }
-            Command::NewNetwork(path) => {
+            Some(Command::NewNetwork(path)) => {
                 println!("Commander loading & optimizing new network {:?}", path);
                 let graph = load_graph(&path);
 
@@ -43,15 +48,15 @@ pub fn commander_main<B: Board, G>(
                 println!("Sending new network to executors");
                 send_graph_command(Some(NetworkOrDummy::Left(Arc::clone(&fused))));
             }
-            Command::WaitForNewNetwork => {
+            Some(Command::WaitForNewNetwork) => {
                 println!("Waiting for new network");
                 send_graph_command(None);
             }
-            Command::UseDummyNetwork => {
+            Some(Command::UseDummyNetwork) => {
                 println!("Switching to dummy network");
                 send_graph_command(Some(NetworkOrDummy::Right(DummyNetwork)));
             }
-            Command::Stop => {
+            Some(Command::Stop) => {
                 //TODO this is probably not enough any more, we need to stop the gpu executors, cpu threads and rebatchers as well
                 update_sender.send(GeneratorUpdate::Stop).unwrap();
                 break;
@@ -62,13 +67,16 @@ pub fn commander_main<B: Board, G>(
 
 //TODO some proper error handling so we don't have to constantly restart the server
 // and it's unclear whether it really crashed
-pub fn read_command(reader: &mut BufReader<impl Read>) -> Command {
+pub fn read_command(reader: &mut BufReader<impl Read>) -> Option<Command> {
     let mut buffer = vec![];
-    reader.read_until(b'\n', &mut buffer).unwrap();
+    let n = reader.read_until(b'\n', &mut buffer).unwrap();
+    if n == 0 {
+        return None;
+    }
     buffer.pop();
 
     let str = str::from_utf8(&buffer).unwrap();
     println!("Received command {}", str);
 
-    serde_json::from_str::<Command>(str).unwrap()
+    Some(serde_json::from_str::<Command>(str).unwrap())
 }

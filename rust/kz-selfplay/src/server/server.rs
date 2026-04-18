@@ -285,11 +285,12 @@ fn selfplay_start_dispatch_spec_non_alt<
 
 fn wait_for_startup_settings(reader: &mut BufReader<&TcpStream>) -> StartupSettings {
     match read_command(reader) {
-        Command::StartupSettings(startup) => startup,
-        command => panic!(
+        Some(Command::StartupSettings(startup)) => startup,
+        Some(command) => panic!(
             "Must receive startup settings before any other command, got {:?}",
             command
         ),
+        None => panic!("Connection lost before receiving startup settings"),
     }
 }
 
