@@ -105,6 +105,16 @@ class LoopSettings:
         self.muzero = self.sample_muzero_steps is not None
         assert self.muzero == self.fixed_settings.muzero, f"Muzero state mismatch, got steps {self.sample_muzero_steps} but fixed settings {self.fixed_settings.muzero}"
 
+        # Validate required game configuration
+        game = self.fixed_settings.game
+        assert game.board_size > 0, f"Game '{game.name}' has invalid board_size={game.board_size}. Must be > 0."
+        assert game.input_bool_channels > 0, f"Game '{game.name}' has invalid input_bool_channels={game.input_bool_channels}. Must be > 0."
+        assert game.policy_size > 0, f"Game '{game.name}' has invalid policy_size={game.policy_size}. Must be > 0."
+        assert game.estimate_moves_per_game > 0, f"Game '{game.name}' has invalid estimate_moves_per_game={game.estimate_moves_per_game}. Must be > 0."
+        assert len(game.possible_mvs) > 0, f"Game '{game.name}' has no possible moves defined."
+
+        assert self.fixed_settings.simulations_per_gen > 0, f"simulations_per_gen must be > 0, got {self.fixed_settings.simulations_per_gen}."
+
         self.log_path = os.path.join(self.root_path, "log.npz")
         self.selfplay_path = os.path.join(self.root_path, "selfplay")
         self.training_path = os.path.join(self.root_path, "training")
