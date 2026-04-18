@@ -214,75 +214,78 @@ class LoopSettings:
             initial_onnx_path = self.save_tmp_onnx_network(network, f"network_{start_gen.gi}")
 
         client = SelfplayClient(self.port)
-        client.send_startup_settings(startup_settings)
-        client.send_new_settings(self.selfplay_settings)
-        if initial_onnx_path is None:
-            client.send_dummy_network()
-        else:
-            client.send_new_network(initial_onnx_path)
-
-        for gi in itertools.count(start_gen.gi):
-            if plotter is not None:
-                plotter.update(logger)
-                plotter.block_while_paused()
-
-            logger.start_batch()
-            logger.log("info", "gen", gi)
-
-            print(f"Waiting for gen {gi} simulations")
-            gen_start = time.perf_counter()
-            actual_gi = client.wait_for_file()
-            logger.log("time", "selfplay", time.perf_counter() - gen_start)
-            assert gi == actual_gi, f"Unexpected finished generation, expected {gi} got {actual_gi}"
-
-            if self.only_generate:
-                print("Not training new network, we're only generating data")
-                continue
-
-            gen = Generation.from_gi(self, gi)
-            os.makedirs(gen.train_path, exist_ok=True)
-
-            buffer.append(logger, DataFile.open(game, gen.simulations_path))
-
-            if buffer.position_count < self.min_buffer_size:
-                print(f"Not training new network yet, only {buffer.position_count}/{self.min_buffer_size} positions")
+        try:
+            client.send_startup_settings(startup_settings)
+            client.send_new_settings(self.selfplay_settings)
+            if initial_onnx_path is None:
+                client.send_dummy_network()
             else:
-                if self.wait_for_new_network:
-                    client.send_wait_for_new_network()
-                self.evaluate_network(buffer, logger, network)
+                client.send_new_network(initial_onnx_path)
 
-                train_sampler = self.sampler(buffer, only_last_gen=False, test=False)
+            for gi in itertools.count(start_gen.gi):
+                if plotter is not None:
+                    plotter.update(logger)
+                    plotter.block_while_paused()
 
-                positions_per_simulation = buffer.position_count / buffer.simulation_count
-                batch_count_float = self.calc_batch_count_per_gen(positions_per_simulation, False)
-                batch_count = stochastic_round(batch_count_float)
-                logger.log("buffer", "batch_count_float", batch_count_float)
-                logger.log("buffer", "batch_count", batch_count)
+                logger.start_batch()
+                logger.log("info", "gen", gi)
 
-                print(
-                    f"Training network on {len(train_sampler.group.positions)}/{buffer.position_count} positions"
-                    f" in buffer with batch count {batch_count_float:.4f} -> {batch_count}"
-                )
-                train_start = time.perf_counter()
+                print(f"Waiting for gen {gi} simulations")
+                gen_start = time.perf_counter()
+                actual_gi = client.wait_for_file()
+                logger.log("time", "selfplay", time.perf_counter() - gen_start)
+                assert gi == actual_gi, f"Unexpected finished generation, expected {gi} got {actual_gi}"
 
-                for bi in range(batch_count):
-                    if bi != 0:
-                        logger.start_batch()
+                if self.only_generate:
+                    print("Not training new network, we're only generating data")
+                    continue
 
-                    train_batch = train_sampler.next_batch_either()
-                    self.train_settings.train_step(train_batch, network, optimizer, logger)
-                train_sampler.close()
+                gen = Generation.from_gi(self, gi)
+                os.makedirs(gen.train_path, exist_ok=True)
 
-                logger.log("time", "train", time.perf_counter() - train_start)
+                buffer.append(logger, DataFile.open(game, gen.simulations_path))
 
-                torch.jit.save(network, gen.network_path_pt)
+                if buffer.position_count < self.min_buffer_size:
+                    print(f"Not training new network yet, only {buffer.position_count}/{self.min_buffer_size} positions")
+                else:
+                    if self.wait_for_new_network:
+                        client.send_wait_for_new_network()
+                    self.evaluate_network(buffer, logger, network)
 
-                curr_onnx_path = self.save_tmp_onnx_network(network, f"network_{gen.gi}")
-                save_onnx(game, gen.network_path_onnx, network, None)
-                client.send_new_network(curr_onnx_path)
+                    train_sampler = self.sampler(buffer, only_last_gen=False, test=False)
 
-            logger.save(self.log_path)
-            Path(gen.finished_path).touch()
+                    positions_per_simulation = buffer.position_count / buffer.simulation_count
+                    batch_count_float = self.calc_batch_count_per_gen(positions_per_simulation, False)
+                    batch_count = stochastic_round(batch_count_float)
+                    logger.log("buffer", "batch_count_float", batch_count_float)
+                    logger.log("buffer", "batch_count", batch_count)
+
+                    print(
+                        f"Training network on {len(train_sampler.group.positions)}/{buffer.position_count} positions"
+                        f" in buffer with batch count {batch_count_float:.4f} -> {batch_count}"
+                    )
+                    train_start = time.perf_counter()
+
+                    for bi in range(batch_count):
+                        if bi != 0:
+                            logger.start_batch()
+
+                        train_batch = train_sampler.next_batch_either()
+                        self.train_settings.train_step(train_batch, network, optimizer, logger)
+                    train_sampler.close()
+
+                    logger.log("time", "train", time.perf_counter() - train_start)
+
+                    torch.jit.save(network, gen.network_path_pt)
+
+                    curr_onnx_path = self.save_tmp_onnx_network(network, f"network_{gen.gi}")
+                    save_onnx(game, gen.network_path_onnx, network, None)
+                    client.send_new_network(curr_onnx_path)
+
+                logger.save(self.log_path)
+                Path(gen.finished_path).touch()
+        finally:
+            client.send_stop()
 
     def load_start_state(self) -> Tuple['Generation', 'LoopBuffer', Logger, nn.Module]:
         game = self.fixed_settings.game
