@@ -87,6 +87,9 @@ impl<B: AltBoard, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for MuZe
             });
         }
 
+        drop(root_client);
+        drop(expand_client);
+
         // spawn gpu expand eval threads
         for local_id in 0..gpu_threads {
             let (graph_sender, graph_receiver) = flume::bounded(1);
@@ -153,6 +156,9 @@ impl<B: AltBoard, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for MuZe
                 })
                 .unwrap();
         }
+
+        drop(root_server);
+        drop(expand_server);
 
         (settings_senders, graph_senders)
     }

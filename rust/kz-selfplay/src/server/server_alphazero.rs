@@ -85,6 +85,8 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
             });
         }
 
+        drop(eval_client);
+
         // spawn gpu eval threads
         for local_id in 0..gpu_threads {
             let (graph_sender, graph_receiver) = flume::bounded(1);
@@ -119,6 +121,8 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
                 })
                 .unwrap();
         }
+
+        drop(eval_server);
 
         (settings_senders, graph_senders)
     }
