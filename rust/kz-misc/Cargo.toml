@@ -9,6 +9,7 @@ default = []
 
 [dependencies]
 board-game.workspace = true
+hexx.workspace = true
 kn-cuda-eval.workspace = true
 kn-cuda-sys.workspace = true
 kn-graph.workspace = true

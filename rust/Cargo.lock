@@ -1472,6 +1472,7 @@ dependencies = [
  "decorum",
  "flume",
  "futures",
+ "hexx",
  "image",
  "internal-iterator",
  "itertools 0.11.0",
