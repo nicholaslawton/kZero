@@ -84,19 +84,14 @@ pub fn visualize_network_activations<B: Board, M: BoardMapper<B>>(
 
         if shape == &value_shape {
             // tanh(value_logit) -> 0..1
-            vec![VisTensor::abs(tensor.mapv(|x| (x.tanh() + 1.0 / 2.0)).to_shared())]
+            vec![VisTensor::abs(tensor.mapv(|x| x.tanh() + 1.0 / 2.0).to_shared())]
         } else if shape == &wdl_shape {
             // softmax(wdl_logits)
             vec![VisTensor::abs(softmax(tensor.view(), Axis(1)).to_shared())]
         } else if shape == &scalar_shape {
             // tanh(value_logit) -> 0..1, softmax(wdl_logits), moves_left
             vec![
-                VisTensor::abs(
-                    tensor
-                        .index_axis(Axis(1), 0)
-                        .mapv(|x| (x.tanh() + 1.0 / 2.0))
-                        .to_shared(),
-                ),
+                VisTensor::abs(tensor.index_axis(Axis(1), 0).mapv(|x| x.tanh() + 1.0 / 2.0).to_shared()),
                 VisTensor::abs(softmax(tensor.slice_axis(Axis(1), Slice::from(1..4)), Axis(1)).to_shared()),
                 VisTensor::norm(tensor.index_axis(Axis(1), 4).to_shared()),
             ]
