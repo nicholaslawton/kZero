@@ -40,4 +40,4 @@ tar.workspace = true
 tui.workspace = true
 vampirc-uci.workspace = true
 env_logger = "0.11.10"
-iced = { version = "0.14.0", features = ["canvas", "smol"] }
+iced = { version = "0.14.0", features = ["advanced", "canvas", "smol", "svg"] }
