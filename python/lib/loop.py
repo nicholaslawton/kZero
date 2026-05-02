@@ -289,7 +289,7 @@ class LoopSettings:
                 Path(gen.finished_path).touch()
 
                 # Cleanup old non-milestone generations
-                self.cleanup_old_generations(gen.gi, milestone_interval=10)
+                gen.cleanup_old_generations(gen.gi, milestone_interval=10)
         finally:
             client.send_stop()
 
