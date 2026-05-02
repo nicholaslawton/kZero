@@ -402,7 +402,7 @@ class Generation:
         if current_gen < milestone_interval:
             return  # Not enough generations to clean up yet
 
-        training_path = self.training_path
+        training_path = self.settings.training_path
         print(f"Cleaning up old non-milestone generations (milestone interval: {milestone_interval})...")
 
         kept = []
