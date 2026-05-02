@@ -287,6 +287,9 @@ class LoopSettings:
 
                 logger.save(self.log_path)
                 Path(gen.finished_path).touch()
+
+                # Cleanup old non-milestone generations
+                self.cleanup_old_generations(gen.gi, milestone_interval=10)
         finally:
             client.send_stop()
 
@@ -389,6 +392,51 @@ class Generation:
         if self.gi == 0:
             return None
         return Generation.from_gi(self.settings, self.gi - 1)
+
+
+    def cleanup_old_generations(self, current_gen: int, milestone_interval: int = 10):
+        """
+        Remove old non-milestone generation networks to save disk space.
+        Keeps milestone generations (gen % milestone_interval == 0) and the most recent generation.
+        """
+        if current_gen < milestone_interval:
+            return  # Not enough generations to clean up yet
+
+        training_path = self.training_path
+        print(f"Cleaning up old non-milestone generations (milestone interval: {milestone_interval})...")
+
+        kept = []
+        removed_files = []
+
+        for gen_dir in sorted(glob.glob(os.path.join(training_path, "gen_*"))):
+            try:
+                gen_num = int(os.path.basename(gen_dir).split("_")[1])
+            except (IndexError, ValueError):
+                continue
+
+            # Keep milestone generations and the current generation
+            if gen_num % milestone_interval == 0 or gen_num == current_gen:
+                kept.append(gen_num)
+                continue
+
+            # Remove non-milestone old generations
+            network_onnx = os.path.join(gen_dir, "network.onnx")
+            network_pt = os.path.join(gen_dir, "network.pt")
+
+            try:
+                if os.path.exists(network_onnx):
+                    os.remove(network_onnx)
+                    removed_files.append(f"gen_{gen_num}/network.onnx")
+                if os.path.exists(network_pt):
+                    os.remove(network_pt)
+                    removed_files.append(f"gen_{gen_num}/network.pt")
+            except Exception as e:
+                print(f"Warning: Failed to remove {gen_dir}: {e}")
+
+        if kept:
+            print(f"Kept milestone/current generations: {sorted(kept)}")
+        if removed_files:
+            print(f"Removed {len(removed_files)} old model files")
 
 
 class LoopBuffer:
