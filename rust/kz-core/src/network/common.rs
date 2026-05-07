@@ -13,6 +13,12 @@ use crate::mapping::{BoardMapper, PolicyMapper};
 use crate::network::ZeroEvaluation;
 use crate::zero::values::ZeroValuesPov;
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct PreparedEvalInput<B> {
+    pub board: B,
+    pub policy_indices: Vec<usize>,
+}
+
 pub fn decode_output<B: Board, P: PolicyMapper<B>>(
     policy_mapper: P,
     boards: &[impl Borrow<B>],
@@ -84,6 +90,89 @@ pub fn decode_output<B: Board, P: PolicyMapper<B>>(
                 softmax_in_place(&mut policy);
                 policy
             });
+
+            // combine everything
+            let values = ZeroValuesPov {
+                value: ScalarPov::new(value),
+                wdl,
+                moves_left,
+            };
+            ZeroEvaluation {
+                values,
+                policy: Cow::Owned(policy),
+            }
+        })
+        .collect()
+}
+
+
+pub fn decode_output_prepared<B: Board, P: PolicyMapper<B>>(
+    policy_mapper: P,
+    inputs: &[impl Borrow<PreparedEvalInput<B>>],
+    outputs: &[&[f32]],
+) -> Vec<ZeroEvaluation<'static>> {
+    let batch_size = inputs.len();
+    let policy_len = policy_mapper.policy_len();
+
+    // stack storage for some intermediate values
+    let scalars;
+    const NAN_SLICE: &[f32] = &[f32::NAN];
+    let nan_array = ArrayView1::from(NAN_SLICE);
+
+    // interpret outputs
+    let (batch_value_logit, batch_wdl_logit, batch_moves_left, batch_policy_logit) = match outputs.len() {
+        2 => {
+            scalars = ArrayView2::from_shape((batch_size, 5), outputs[0]).unwrap();
+            let policy = ArrayView2::from_shape((batch_size, policy_len), outputs[1]).unwrap();
+
+            (
+                scalars.slice(s![.., 0]),
+                scalars.slice(s![.., 1..4]),
+                scalars.slice(s![.., 4]),
+                policy,
+            )
+        }
+        3 => {
+            let value = ArrayView1::from_shape(batch_size, outputs[0]).unwrap();
+            let wdl = ArrayView2::from_shape((batch_size, 3), outputs[1]).unwrap();
+            let moves_left = nan_array.broadcast(batch_size).unwrap();
+            let policy = ArrayView2::from_shape((batch_size, policy_len), outputs[2]).unwrap();
+
+            (value, wdl, moves_left, policy)
+        }
+        _ => unreachable!("Output count should have been checked already"),
+    };
+
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(bi, input)| {
+            let input = input.borrow();
+
+            // simple scalars
+            let value = batch_value_logit[bi].tanh();
+            let moves_left = batch_moves_left[bi];
+
+            // wdl
+            let mut wdl = [
+                batch_wdl_logit[(bi, 0)],
+                batch_wdl_logit[(bi, 1)],
+                batch_wdl_logit[(bi, 2)],
+            ];
+            softmax_in_place(&mut wdl);
+            let wdl = WDL {
+                win: wdl[0],
+                draw: wdl[1],
+                loss: wdl[2],
+            };
+
+            // policy
+            let mut policy: Vec<f32> = input
+                .policy_indices
+                .iter()
+                .map(|&index| batch_policy_logit[(bi, index)])
+                .collect();
+            softmax_in_place(&mut policy);
 
             // combine everything
             let values = ZeroValuesPov {
@@ -211,5 +300,63 @@ pub fn zero_values_from_scalars(scalars: &[f32]) -> ZeroValuesPov {
         value: ScalarPov::new(value),
         wdl: WDL::new(wdl[0], wdl[1], wdl[2]),
         moves_left,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use board_game::board::{Board, BoardMoves};
+    use board_game::games::ttt::TTTBoard;
+    use board_game::util::coord::Coord3;
+    use internal_iterator::InternalIterator;
+
+    use crate::mapping::ttt::TTTStdMapper;
+    use crate::mapping::PolicyMapper;
+
+    use super::*;
+
+    #[test]
+    fn prepared_decode_matches_standard_decode() {
+        let mapper = TTTStdMapper;
+        let mut board = TTTBoard::default();
+        board.play(Coord3::from_index(0)).unwrap();
+
+        let legal_moves: Vec<_> = board.available_moves().unwrap().collect();
+        let policy_indices = legal_moves.iter().map(|&mv| mapper.move_to_index(&board, mv)).collect();
+        let prepared_input = PreparedEvalInput {
+            board: board.clone(),
+            policy_indices,
+        };
+
+        let value = vec![0.25];
+        let wdl = vec![0.1, -0.2, 0.4];
+        let policy = (0..mapper.policy_len())
+            .map(|index| index as f32 * 0.25 - 0.5)
+            .collect::<Vec<_>>();
+
+        let standard = decode_output(mapper, &[board], &[&value, &wdl, &policy]);
+        let prepared = decode_output_prepared(mapper, &[prepared_input], &[&value, &wdl, &policy]);
+
+        assert_eq!(
+            standard[0].values.value.value.to_bits(),
+            prepared[0].values.value.value.to_bits()
+        );
+        assert_eq!(
+            standard[0].values.wdl.win.to_bits(),
+            prepared[0].values.wdl.win.to_bits()
+        );
+        assert_eq!(
+            standard[0].values.wdl.draw.to_bits(),
+            prepared[0].values.wdl.draw.to_bits()
+        );
+        assert_eq!(
+            standard[0].values.wdl.loss.to_bits(),
+            prepared[0].values.wdl.loss.to_bits()
+        );
+        assert_eq!(
+            standard[0].values.moves_left.to_bits(),
+            prepared[0].values.moves_left.to_bits()
+        );
+        assert_eq!(standard[0].policy.as_ref(), prepared[0].policy.as_ref());
     }
 }

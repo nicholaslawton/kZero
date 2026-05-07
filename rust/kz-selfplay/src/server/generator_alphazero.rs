@@ -1,15 +1,20 @@
 use board_game::board::Board;
 use board_game::games::max_length::MaxMovesBoard;
+use board_game::symmetry::{Symmetry, SymmetryDistribution};
 use flume::{Receiver, TryRecvError};
 use itertools::Itertools;
 use lru::LruCache;
+use rand::distributions::Distribution;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use std::hash::Hash;
 
+use kz_core::mapping::BoardMapper;
 use kz_core::network::common::policy_softmax_temperature_in_place;
-use kz_core::network::{EvalClient, ZeroEvaluation};
+use kz_core::network::common::PreparedEvalInput;
+use kz_core::network::job_channel::JobClient;
+use kz_core::network::ZeroEvaluation;
 use kz_core::zero::step::{zero_step_apply, zero_step_gather, ZeroRequest};
 use kz_core::zero::tree::Tree;
 use kz_util::sequence::zip_eq_exact;
@@ -20,12 +25,14 @@ use crate::server::protocol::{Evals, GeneratorUpdate, Settings};
 use crate::server::server::UpdateSender;
 use crate::simulation::{Position, Simulation};
 
-pub async fn generator_alphazero_main<B: Board + Hash>(
+pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
     generator_id: usize,
     start_pos: impl Fn(&mut StdRng) -> B,
     settings_receiver: Receiver<Settings>,
     search_batch_size: usize,
-    eval_client: EvalClient<B>,
+    eval_client: JobClient<PreparedEvalInput<B>, ZeroEvaluation<'static>>,
+    mapper: M,
+    eval_random_symmetries: bool,
     update_sender: UpdateSender<B>,
 ) {
     let mut rng = StdRng::from_entropy();
@@ -51,6 +58,8 @@ pub async fn generator_alphazero_main<B: Board + Hash>(
             search_batch_size,
             &update_sender,
             &eval_client,
+            mapper,
+            eval_random_symmetries,
             start_pos(&mut rng),
             &mut rng,
         )
@@ -67,12 +76,14 @@ pub async fn generator_alphazero_main<B: Board + Hash>(
 
 type Cache<B> = LruCache<B, ZeroEvaluation<'static>>;
 
-async fn generate_simulation<B: Board + Hash>(
+async fn generate_simulation<B: Board + Hash, M: BoardMapper<B>>(
     generator_id: usize,
     settings: &Settings,
     search_batch_size: usize,
     update_sender: &UpdateSender<B>,
-    eval_client: &EvalClient<B>,
+    eval_client: &JobClient<PreparedEvalInput<B>, ZeroEvaluation<'static>>,
+    mapper: M,
+    eval_random_symmetries: bool,
     start: B,
     rng: &mut impl Rng,
 ) -> Simulation<'static, B> {
@@ -99,6 +110,8 @@ async fn generate_simulation<B: Board + Hash>(
             settings,
             search_batch_size,
             eval_client,
+            mapper,
+            eval_random_symmetries,
             &mut cache,
             &curr_board,
             target_visits,
@@ -148,10 +161,12 @@ async fn generate_simulation<B: Board + Hash>(
     }
 }
 
-async fn build_tree<B: Board + Hash>(
+async fn build_tree<B: Board + Hash, M: BoardMapper<B>>(
     settings: &Settings,
     search_batch_size: usize,
-    eval_client: &EvalClient<B>,
+    eval_client: &JobClient<PreparedEvalInput<B>, ZeroEvaluation<'static>>,
+    mapper: M,
+    eval_random_symmetries: bool,
     cache: &mut Cache<B>,
     curr_board: &MaxMovesBoard<B>,
     target_visits: u64,
@@ -200,8 +215,11 @@ async fn build_tree<B: Board + Hash>(
         }
 
         // evaluate requests
-        let boards = requests.iter().map(|r| r.board.inner().clone()).collect_vec();
-        let evals = eval_client.map_async(boards).await;
+        let inputs = requests
+            .iter()
+            .map(|request| prepare_eval_input(request, mapper, eval_random_symmetries, rng))
+            .collect_vec();
+        let evals = eval_client.map_async(inputs).await;
 
         // apply all of them
         for (request, eval) in zip_eq_exact(requests, evals) {
@@ -212,6 +230,34 @@ async fn build_tree<B: Board + Hash>(
 
     let net_evaluation = root_net_eval.unwrap();
     (tree, cached_evals, net_evaluation)
+}
+
+fn prepare_eval_input<B: Board, M: BoardMapper<B>>(
+    request: &ZeroRequest<MaxMovesBoard<B>>,
+    mapper: M,
+    eval_random_symmetries: bool,
+    rng: &mut impl Rng,
+) -> PreparedEvalInput<B> {
+    let board = request.board.inner();
+    let sym = if eval_random_symmetries && !B::Symmetry::is_unit() {
+        SymmetryDistribution.sample(rng)
+    } else {
+        B::Symmetry::default()
+    };
+    let mapped_board = board.map(sym);
+    let policy_indices = request
+        .available_moves
+        .iter()
+        .map(|&mv| {
+            let mapped_mv = board.map_move(sym, mv);
+            mapper.move_to_index(&mapped_board, mapped_mv)
+        })
+        .collect();
+
+    PreparedEvalInput {
+        board: mapped_board,
+        policy_indices,
+    }
 }
 
 fn apply_eval<B: Board>(

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::hash::Hash;
 
 use board_game::board::Board;
@@ -9,13 +10,13 @@ use kn_graph::graph::Graph;
 use kn_graph::onnx::load_graph_from_onnx_path;
 use kn_graph::optimizer::optimize_graph;
 use rand::rngs::StdRng;
-use rand::thread_rng;
 
 use kz_core::mapping::BoardMapper;
+use kz_core::network::common::PreparedEvalInput;
 use kz_core::network::cudnn::CudaNetwork;
+use kz_core::network::dummy::{uniform_policy, uniform_values, NetworkOrDummy};
 use kz_core::network::job_channel::job_pair;
-use kz_core::network::symmetry::RandomSymmetryNetwork;
-use kz_core::network::Network;
+use kz_core::network::ZeroEvaluation;
 use kz_util::math::ceil_div;
 
 use crate::server::executor::{batched_executor_loop, RunCondition};
@@ -67,7 +68,9 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
 
             let start_pos = start_pos.clone();
             let eval_client = eval_client.clone();
+            let mapper = mapper;
             let update_sender = update_sender.clone();
+            let eval_random_symmetries = startup.eval_random_symmetries;
 
             let (settings_sender, settings_receiver) = flume::bounded(1);
             settings_senders.push(settings_sender);
@@ -79,6 +82,8 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
                     settings_receiver,
                     search_batch_size,
                     eval_client,
+                    mapper,
+                    eval_random_symmetries,
                     update_sender,
                 )
                 .await;
@@ -94,7 +99,6 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
 
             let eval_server = eval_server.clone();
             let update_sender = update_sender.clone();
-            let eval_random_symmetries = startup.eval_random_symmetries;
 
             s.builder()
                 .name(format!("gpu-expand-{}-{}", device_id, local_id))
@@ -104,14 +108,9 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
                         RunCondition::JobCount(eval_job_count),
                         graph_receiver,
                         eval_server,
-                        |graph| {
-                            graph.map_left(|graph| {
-                                let inner = CudaNetwork::new(mapper, &graph, gpu_batch_size, device);
-                                RandomSymmetryNetwork::new(inner, thread_rng(), eval_random_symmetries)
-                            })
-                        },
+                        |graph| graph.map_left(|graph| CudaNetwork::new(mapper, &graph, gpu_batch_size, device)),
                         |network, x| {
-                            let y = network.evaluate_batch(&x);
+                            let y = evaluate_prepared_network_or_dummy(network, x);
                             let msg =
                                 GeneratorUpdate::ExpandEvals(Evals::new(x.len() as u64, gpu_batch_size as u64, 0));
                             update_sender.send(msg).unwrap();
@@ -129,5 +128,21 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
 
     fn load_graph(&self, path: &str, _: M, _: &StartupSettings) -> Self::G {
         optimize_graph(&load_graph_from_onnx_path(path, false).unwrap(), Default::default())
+    }
+}
+
+fn evaluate_prepared_network_or_dummy<B: Board, M: BoardMapper<B>>(
+    network: &mut NetworkOrDummy<CudaNetwork<B, M>>,
+    inputs: &[PreparedEvalInput<B>],
+) -> Vec<ZeroEvaluation<'static>> {
+    match network {
+        NetworkOrDummy::Left(network) => network.evaluate_prepared_batch(inputs),
+        NetworkOrDummy::Right(_) => inputs
+            .iter()
+            .map(|input| ZeroEvaluation {
+                values: uniform_values(),
+                policy: Cow::Owned(uniform_policy(input.policy_indices.len())),
+            })
+            .collect(),
     }
 }

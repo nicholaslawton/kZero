@@ -12,7 +12,7 @@ use kn_graph::graph::Graph;
 use kz_util::sequence::VecExtPad;
 
 use crate::mapping::BoardMapper;
-use crate::network::common::{check_graph_shapes, decode_output};
+use crate::network::common::{check_graph_shapes, decode_output, decode_output_prepared, PreparedEvalInput};
 use crate::network::{Network, ZeroEvaluation};
 
 pub struct CudaNetwork<B: Board, M: BoardMapper<B>> {
@@ -45,6 +45,44 @@ impl<B: Board, M: BoardMapper<B>> CudaNetwork<B, M> {
     pub fn executor(&mut self) -> &mut CudaExecutor {
         &mut self.executor
     }
+
+    pub fn evaluate_prepared_batch(
+        &mut self,
+        inputs: &[impl Borrow<PreparedEvalInput<B>>],
+    ) -> Vec<ZeroEvaluation<'static>> {
+        let batch_size = inputs.len();
+        let max_batch_size = self.max_batch_size;
+        assert!(batch_size <= max_batch_size);
+
+        // encode input, padded until batch size
+        self.input.clear();
+        for input in inputs {
+            self.mapper.encode_input_full(&mut self.input, &input.borrow().board)
+        }
+        self.input.pad(max_batch_size * self.mapper.input_full_len(), f32::NAN);
+
+        // TODO switch to tensor/array view here? this extra copy is sad
+        let mut input_shape = vec![self.max_batch_size];
+        input_shape.extend_from_slice(&self.mapper.input_full_shape());
+        let input = Tensor::from_shape_vec(input_shape, self.input.clone()).unwrap();
+
+        // run the actual computation
+        let outputs = self.executor.evaluate(&[DTensor::F32(input)]);
+
+        let relevant_outputs = outputs
+            .iter()
+            .map(|x| {
+                let x = x.unwrap_f32().unwrap().as_slice().unwrap();
+                let other_size = x.len() / max_batch_size;
+                &x[0..batch_size * other_size]
+            })
+            .collect_vec();
+
+        // decode the relevant part of the output
+        // the number and shape of outputs has been checked already
+        decode_output_prepared(self.mapper, inputs, &relevant_outputs)
+    }
+
 }
 
 impl<B: Board, M: BoardMapper<B>> Network<B> for CudaNetwork<B, M> {

@@ -19,9 +19,10 @@ use crate::zero::tree::Tree;
 use crate::zero::values::{ZeroValuesAbs, ZeroValuesPov};
 
 #[derive(Debug)]
-pub struct ZeroRequest<B> {
+pub struct ZeroRequest<B: Board> {
     pub node: usize,
     pub board: B,
+    pub available_moves: Vec<B::Move>,
 }
 
 #[derive(Debug)]
@@ -83,13 +84,13 @@ pub fn zero_step_gather<B: Board>(
         let children = match tree[curr_node].children {
             None => {
                 // initialize the children with uniform policy
-                let mv_count = curr_board.available_moves().unwrap().count();
-                let p = 1.0 / mv_count as f32;
+                let available_moves: Vec<_> = curr_board.available_moves().unwrap().collect();
+                let p = 1.0 / available_moves.len() as f32;
 
                 let start = tree.len();
-                curr_board.available_moves().unwrap().for_each(|mv| {
+                for &mv in &available_moves {
                     tree.nodes.push(Node::new(Some(curr_node), Some(mv), p));
-                });
+                }
                 let end = tree.len();
 
                 tree[curr_node].children = Some(IdxRange::new(start, end));
@@ -99,6 +100,7 @@ pub fn zero_step_gather<B: Board>(
                 return Some(ZeroRequest {
                     board: curr_board,
                     node: curr_node,
+                    available_moves,
                 });
             }
             Some(children) => children,
@@ -269,7 +271,7 @@ impl FromStr for QMode {
     }
 }
 
-impl<B> ZeroRequest<B> {
+impl<B: Board> ZeroRequest<B> {
     pub fn respond(self, eval: ZeroEvaluation) -> ZeroResponse<B> {
         ZeroResponse {
             node: self.node,
