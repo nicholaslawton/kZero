@@ -1,7 +1,9 @@
+import gc
 import glob
 import itertools
 import json
 import os
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -280,8 +282,12 @@ class LoopSettings:
                 # Always save the network (even if we didn't train, so this gen is complete and can be loaded)
                 torch.jit.save(network, gen.network_path_pt)
 
-                curr_onnx_path = self.save_tmp_onnx_network(network, f"network_{gen.gi}")
-                save_onnx(game, gen.network_path_onnx, network, None)
+                export_network = torch.jit.load(gen.network_path_pt, map_location="cpu")
+                curr_onnx_path = self.save_tmp_onnx_network(export_network, f"network_{gen.gi}")
+                assert not os.path.exists(gen.network_path_onnx), f"Output path already exists: {gen.network_path_onnx}"
+                shutil.copy2(curr_onnx_path, gen.network_path_onnx)
+                del export_network
+                gc.collect()
 
                 if buffer.position_count >= self.min_buffer_size:
                     client.send_new_network(curr_onnx_path)
