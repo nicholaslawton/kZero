@@ -94,7 +94,7 @@ pub fn collector_main<B: Board>(
         // periodically print stats
         let now = Instant::now();
         let delta = (now - last_print_time).as_secs_f32();
-        if delta >= 1.0 {
+        if delta >= 10.0 {
             total_games += counter.games;
             total_moves += counter.moves;
 
