@@ -97,6 +97,8 @@ class LoopSettings:
     sample_include_final: bool
     sample_random_symmetries: bool
 
+    target_gen: int = 0  # 0 = run indefinitely, train until this generation
+
     muzero: bool = field(init=False)
 
     log_path: str = field(init=False)
@@ -294,6 +296,11 @@ class LoopSettings:
 
                 logger.save(self.log_path)
                 Path(gen.finished_path).touch()
+
+                # Check for termination condition
+                if self.target_gen > 0 and gi >= self.target_gen:
+                    print(f"Reached target_gen={self.target_gen}, terminating training")
+                    break
 
                 # Cleanup old non-milestone generations
                 gen.cleanup_old_generations(gen.gi, milestone_interval=100)
