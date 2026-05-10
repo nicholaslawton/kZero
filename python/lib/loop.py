@@ -96,6 +96,7 @@ class LoopSettings:
     sample_muzero_steps: Optional[int]
     sample_include_final: bool
     sample_random_symmetries: bool
+    sample_include_full_search: bool = True  # filter to full-search positions only (KataGo-style)
 
     target_gen: int = 0  # 0 = run indefinitely, train until this generation
 
@@ -370,7 +371,8 @@ class LoopSettings:
             include_final=self.sample_include_final,
             random_symmetries=self.sample_random_symmetries,
             only_last_gen=only_last_gen,
-            test=test
+            test=test,
+            include_full_search=self.sample_include_full_search,
         )
 
 
@@ -499,7 +501,7 @@ class LoopBuffer:
     def sampler(
             self,
             batch_size: int, unroll_steps: Optional[int], include_final: bool, random_symmetries: bool,
-            only_last_gen: bool, test: bool
+            only_last_gen: bool, test: bool, include_full_search: bool = True
     ):
         files = [self.files[-1]] if only_last_gen else self.files
 
@@ -520,4 +522,5 @@ class LoopBuffer:
             include_final_for_each=False,
             random_symmetries=random_symmetries,
             threads=1,
+            include_full_search=include_full_search,
         )

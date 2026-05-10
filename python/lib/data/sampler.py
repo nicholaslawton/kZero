@@ -18,6 +18,7 @@ class PositionSampler:
             include_final_for_each: bool,
             random_symmetries: bool,
             threads: int,
+            include_full_search: bool = True,
     ):
         self.group = group
 
@@ -29,6 +30,7 @@ class PositionSampler:
         self.include_final = include_final
         self.include_final_for_each = include_final_for_each
         self.random_symmetries = random_symmetries
+        self.include_full_search = include_full_search
 
         self.queue = CQueue(threads + 1)
 
@@ -76,7 +78,7 @@ def collect_simple_batch(sampler: PositionSampler, group: DataGroup):
     positions = []
 
     for _ in range(sampler.batch_size):
-        _, p = sample_position(group, sampler.include_final, sampler.include_final_for_each)
+        _, p = sample_position(group, sampler.include_final, sampler.include_final_for_each, sampler.include_full_search)
 
         if sampler.random_symmetries:
             index = random.randrange(len(p.game.symmetry))
@@ -93,7 +95,7 @@ def collect_unrolled_batch(sampler: PositionSampler, group: DataGroup, unroll_st
     chains = []
 
     for _ in range(sampler.batch_size):
-        (first_pi, first_position) = sample_position(group, sampler.include_final, sampler.include_final_for_each)
+        (first_pi, first_position) = sample_position(group, sampler.include_final, sampler.include_final_for_each, sampler.include_full_search)
         chain = [first_position]
 
         for ri in range(unroll_steps):
@@ -131,12 +133,15 @@ def collect_unrolled_batch(sampler: PositionSampler, group: DataGroup, unroll_st
     )
 
 
-def sample_position(group: DataGroup, include_final: bool, include_final_for_each: bool) -> (int, Position):
+def sample_position(group: DataGroup, include_final: bool, include_final_for_each: bool, include_full_search: bool = True) -> (int, Position):
     while True:
         pi = random.randrange(len(group.positions))
         pos = group.positions[pi]
 
         if pos.is_final and not include_final:
+            continue
+
+        if include_full_search and not pos.is_full_search:
             continue
 
         if include_final_for_each:
