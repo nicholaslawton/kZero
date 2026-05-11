@@ -298,13 +298,13 @@ class LoopSettings:
                 logger.save(self.log_path)
                 Path(gen.finished_path).touch()
 
+                # Cleanup old non-milestone generations
+                gen.cleanup_old_generations(gen.gi, milestone_interval=100)
+
                 # Check for termination condition
                 if self.target_gen > 0 and gi >= self.target_gen:
                     print(f"Reached target_gen={self.target_gen}, terminating training")
                     break
-
-                # Cleanup old non-milestone generations
-                gen.cleanup_old_generations(gen.gi, milestone_interval=100)
         finally:
             client.send_stop()
 
