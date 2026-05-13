@@ -298,8 +298,9 @@ class LoopSettings:
                 logger.save(self.log_path)
                 Path(gen.finished_path).touch()
 
-                # Cleanup old non-milestone generations
-                gen.cleanup_old_generations(gen.gi, milestone_interval=100)
+                # ONNX retention is managed by the evaluation/retention process.
+                # PT files are only needed for recent training resumption.
+                gen.cleanup_old_pt_files(gen.gi, keep_count=3)
 
                 # Check for termination condition
                 if self.target_gen > 0 and gi >= self.target_gen:
@@ -410,16 +411,19 @@ class Generation:
         return Generation.from_gi(self.settings, self.gi - 1)
 
 
-    def cleanup_old_generations(self, current_gen: int, milestone_interval: int = 10):
+    def cleanup_old_pt_files(self, current_gen: int, keep_count: int = 3):
         """
-        Remove old non-milestone generation networks to save disk space.
-        Keeps milestone generations (gen % milestone_interval == 0) and the most recent generation.
+        Remove old TorchScript checkpoints to save disk space.
+        ONNX files are retained or removed by the external retention manager.
         """
-        if current_gen < milestone_interval:
-            return  # Not enough generations to clean up yet
+        if keep_count <= 0:
+            raise ValueError(f"keep_count must be positive, got {keep_count}")
+        if current_gen + 1 <= keep_count:
+            return
 
         training_path = self.settings.training_path
-        print(f"Cleaning up old non-milestone generations (milestone interval: {milestone_interval})...")
+        first_kept_gen = current_gen - keep_count + 1
+        print(f"Cleaning up old PT checkpoints (keeping gen {first_kept_gen} through {current_gen})...")
 
         kept = []
         removed_files = []
@@ -430,19 +434,13 @@ class Generation:
             except (IndexError, ValueError):
                 continue
 
-            # Keep milestone generations and the current generation
-            if gen_num % milestone_interval == 0 or gen_num == current_gen:
+            if gen_num >= first_kept_gen:
                 kept.append(gen_num)
                 continue
 
-            # Remove non-milestone old generations
-            network_onnx = os.path.join(gen_dir, "network.onnx")
             network_pt = os.path.join(gen_dir, "network.pt")
 
             try:
-                if os.path.exists(network_onnx):
-                    os.remove(network_onnx)
-                    removed_files.append(f"gen_{gen_num}/network.onnx")
                 if os.path.exists(network_pt):
                     os.remove(network_pt)
                     removed_files.append(f"gen_{gen_num}/network.pt")
@@ -450,9 +448,9 @@ class Generation:
                 print(f"Warning: Failed to remove {gen_dir}: {e}")
 
         if kept:
-            print(f"Kept milestone/current generations: {sorted(kept)}")
+            print(f"Kept recent PT generations: {sorted(kept)}")
         if removed_files:
-            print(f"Removed {len(removed_files)} old model files")
+            print(f"Removed {len(removed_files)} old PT files")
 
 
 class LoopBuffer:
