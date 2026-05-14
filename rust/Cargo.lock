@@ -2840,6 +2840,7 @@ dependencies = [
  "kz-selfplay",
  "kz-util",
  "ndarray",
+ "nypc-perf",
  "palette",
  "pgn-reader",
  "rand 0.8.5",
@@ -2847,7 +2848,6 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "skillratings",
  "tabled",
  "tar",
  "tui",
@@ -3412,6 +3412,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "nypc-perf"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90b7d80f4f58837293bd112c52ce9f3d953eb7b68c4480662ffeb428a208c526"
 
 [[package]]
 name = "objc"
@@ -5012,15 +5018,6 @@ name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
-
-[[package]]
-name = "skillratings"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d092cda2fa802e2e64f9ca9c6b54ffbb9a64c8bb585f6f7a601fedaea22b8b2"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "skrifa"
