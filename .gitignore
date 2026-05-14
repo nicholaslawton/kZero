@@ -20,6 +20,7 @@ rust/kz-core/proptest-regressions/
 # Symlinks to external game implementations
 rust/kz-core/src/mapping/oriflambe
 python/lib/oriflambe.py
+python/lib/oriflambe_metadata.py
 python/main/train_oriflambe.py
 rust/kz-misc/src/bin/play_oriflambe.rs
 rust/kz-misc/src/bin/play_oriflambe_gui.rs
