@@ -64,7 +64,7 @@ pub fn decode_output<B: Board, P: PolicyMapper<B>>(
 
             // simple scalars
             let value = batch_value_logit[bi].tanh();
-            let moves_left = batch_moves_left[bi];
+            let moves_left = batch_moves_left[bi].max(0.0);
 
             // wdl
             let mut wdl = [
@@ -151,7 +151,7 @@ pub fn decode_output_prepared<B: Board, P: PolicyMapper<B>>(
 
             // simple scalars
             let value = batch_value_logit[bi].tanh();
-            let moves_left = batch_moves_left[bi];
+            let moves_left = batch_moves_left[bi].max(0.0);
 
             // wdl
             let mut wdl = [
@@ -294,7 +294,7 @@ pub fn zero_values_from_scalars(scalars: &[f32]) -> ZeroValuesPov {
     let mut wdl = [scalars[1], scalars[2], scalars[3]];
     softmax_in_place(&mut wdl);
 
-    let moves_left = scalars[4];
+    let moves_left = scalars[4].max(0.0);
 
     ZeroValuesPov {
         value: ScalarPov::new(value),
