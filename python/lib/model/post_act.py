@@ -20,7 +20,9 @@ class ScalarHead(nn.Module):
         )
 
     def forward(self, common):
-        return self.seq(common)
+        out = self.seq(common)
+        moves_left = torch.relu(out[:, 4:5])
+        return torch.cat([out[:, :4], moves_left], dim=1)
 
 
 class DensePolicyHead(nn.Module):
