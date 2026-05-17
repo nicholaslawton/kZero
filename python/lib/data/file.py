@@ -44,6 +44,8 @@ class DataFileInfo:
         total_move_count = self.position_count - self.includes_final_positions * self.simulation_count
         self.mean_simulation_length = total_move_count / self.simulation_count
 
+        self.mean_available_mv_count = meta.pop("mean_available_mv_count")
+
         self.scalar_names = meta.pop("scalar_names")
 
         assert len(meta) == 0, f"Leftover meta values: {meta}"

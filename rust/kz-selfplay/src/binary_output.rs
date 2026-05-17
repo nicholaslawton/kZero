@@ -36,6 +36,7 @@ struct MetaData<'a> {
     min_game_length: i32,
     root_wdl: [f32; 3],
     hit_move_limit: f32,
+    mean_available_mv_count: f32,
 
     scalar_names: &'static [&'static str],
 }
@@ -57,6 +58,9 @@ pub struct BinaryOutput<B: Board, M: BoardMapper<B>> {
 
     total_root_wdl: WDL<u64>,
     hit_move_limit_count: u64,
+
+    total_available_mv_count: u64,
+    non_final_position_count: u64,
 
     next_offset: u64,
     game_start_indices: Vec<u64>,
@@ -116,6 +120,9 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             total_root_wdl: WDL::default(),
             hit_move_limit_count: 0,
 
+            total_available_mv_count: 0,
+            non_final_position_count: 0,
+
             next_offset: 0,
             game_start_indices: vec![],
 
@@ -158,6 +165,9 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             let (available_mv_count, policy_indices) = collect_policy_indices(board, self.mapper);
             assert_eq!(available_mv_count, zero_evaluation.policy.len());
             assert_eq!(available_mv_count, net_evaluation.policy.len());
+
+            self.total_available_mv_count += available_mv_count as u64;
+            self.non_final_position_count += 1;
 
             let played_mv_index = self.mapper.move_to_index(board, played_mv);
             let kdl_policy = kdl_divergence(&zero_evaluation.policy, &net_evaluation.policy);
@@ -275,6 +285,7 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             min_game_length: self.min_game_length.unwrap_or(-1),
             root_wdl: (self.total_root_wdl.cast::<f32>() / self.game_count as f32).to_slice(),
             hit_move_limit: self.hit_move_limit_count as f32 / self.game_count as f32,
+            mean_available_mv_count: self.total_available_mv_count as f32 / self.non_final_position_count as f32,
         };
 
         serde_json::to_writer_pretty(&mut self.json_tmp_write, &meta)?;

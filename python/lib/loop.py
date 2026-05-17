@@ -496,6 +496,8 @@ class LoopBuffer:
                 logger.log("gen-root-wdl", "d", info.root_wdl[1])
                 logger.log("gen-root-wdl", "l", info.root_wdl[2])
 
+            logger.log("gen-legal-moves", "mean", info.mean_available_mv_count)
+
     def sampler(
             self,
             batch_size: int, unroll_steps: Optional[int], include_final: bool, random_symmetries: bool,
