@@ -12,6 +12,8 @@ use kz_core::mapping::BoardMapper;
 use crate::binary_output::BinaryOutput;
 use crate::server::protocol::{Evals, GeneratorUpdate, ServerUpdate};
 
+const STATS_INTERVAL_SECS: f32 = 60.0;
+
 pub fn collector_main<B: Board>(
     game: &str,
     mut writer: BufWriter<impl std::io::Write>,
@@ -94,7 +96,7 @@ pub fn collector_main<B: Board>(
         // periodically print stats
         let now = Instant::now();
         let delta = (now - last_print_time).as_secs_f32();
-        if delta >= 10.0 {
+        if delta >= STATS_INTERVAL_SECS {
             total_games += counter.games;
             total_moves += counter.moves;
 
@@ -134,7 +136,7 @@ impl Counter {
         muzero: bool,
     ) -> Result<String, std::fmt::Error> {
         let move_throughput = self.moves as f32 / delta;
-        let game_throughput = self.games as f32 / delta;
+        let games_per_hour = self.games as f32 / delta * 3600.0;
 
         let min_game_length = game_lengths.values().copied().min().unwrap_or(0);
         let max_game_length = game_lengths.values().copied().max().unwrap_or(0);
@@ -153,8 +155,8 @@ impl Counter {
         }
         writeln!(
             f,
-            "  moves: {:.2}/s => {}, games: {:.2}/s => {}",
-            move_throughput, total_moves, game_throughput, total_games
+            "  moves: {:.2}/s => {}, games: {:.1}/h => {}",
+            move_throughput, total_moves, games_per_hour, total_games
         )?;
         writeln!(
             f,
