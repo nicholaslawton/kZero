@@ -10,6 +10,7 @@ use itertools::Itertools;
 use rand::Rng;
 
 use kz_util::sequence::zip_eq_exact;
+use kz_util::stable_dirichlet::StableDirichlet;
 
 use crate::bot::AsyncBot;
 use crate::network::common::policy_softmax_temperature_in_place;
@@ -28,6 +29,8 @@ pub struct ZeroSettings {
     pub fpu_child: FpuMode,
     pub virtual_loss_weight: f32,
     pub policy_temperature: f32,
+    pub dirichlet_alpha: f32,
+    pub dirichlet_eps: f32,
 }
 
 impl ZeroSettings {
@@ -40,6 +43,8 @@ impl ZeroSettings {
             fpu_child: fpu,
             policy_temperature: 1.0,
             virtual_loss_weight: 1.0,
+            dirichlet_alpha: 0.0,
+            dirichlet_eps: 0.0,
         }
     }
 
@@ -60,7 +65,15 @@ impl ZeroSettings {
             fpu_child,
             virtual_loss_weight,
             policy_temperature,
+            dirichlet_alpha: 0.0,
+            dirichlet_eps: 0.0,
         }
+    }
+
+    pub fn with_dirichlet(mut self, alpha: f32, eps: f32) -> Self {
+        self.dirichlet_alpha = alpha;
+        self.dirichlet_eps = eps;
+        self
     }
 
     pub fn fpu_mode(&self, is_root: bool) -> FpuMode {
@@ -68,6 +81,17 @@ impl ZeroSettings {
             self.fpu_root
         } else {
             self.fpu_child
+        }
+    }
+
+    fn add_dirichlet_noise(&self, policy: &mut [f32], rng: &mut impl Rng) {
+        if policy.len() > 1 && self.dirichlet_eps > 0.0 {
+            if let Ok(distr) = StableDirichlet::new(self.dirichlet_alpha, policy.len()) {
+                let noise = rng.sample(distr);
+                for (p, n) in zip_eq_exact(policy, noise) {
+                    *p = (1.0 - self.dirichlet_eps) * (*p) + self.dirichlet_eps * n;
+                }
+            }
         }
     }
 }
@@ -172,6 +196,9 @@ impl ZeroSettings {
             // add all evaluations back to the tree
             for (req, mut eval) in zip_eq_exact(requests, evals) {
                 policy_softmax_temperature_in_place(eval.policy.to_mut(), self.policy_temperature);
+                if req.node == 0 {
+                    self.add_dirichlet_noise(eval.policy.to_mut(), rng);
+                }
                 zero_step_apply(tree, req.respond(eval));
             }
         }
