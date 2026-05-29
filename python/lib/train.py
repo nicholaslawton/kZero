@@ -29,7 +29,9 @@ class ScalarTarget:
         if self.final == 0.0:
             return zero
 
-        return self.final * final + (1.0 - self.final) * zero
+        blend = self.final * final + (1.0 - self.final) * zero
+        blend[~torch.isfinite(zero)] = final[~torch.isfinite(zero)]
+        return blend
 
 
 ScalarTarget.Final = ScalarTarget(1.0)
