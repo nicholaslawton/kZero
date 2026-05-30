@@ -182,8 +182,7 @@ class TrainSettings:
 
         batch_value = self.scalar_target.pick(final=batch.v_final, zero=batch.v_zero)
         batch_wdl = self.scalar_target.pick(final=batch.wdl_final, zero=batch.wdl_zero)
-        # TODO this should be replaced with the same pick construct as the other ones
-        batch_moves_left = batch.moves_left_final
+        batch_moves_left = self.scalar_target.pick(final=batch.moves_left_final, zero=batch.moves_left_zero)
 
         # calculate losses
         loss_value_separate = nnf.mse_loss(value, batch_value, reduction="none")
