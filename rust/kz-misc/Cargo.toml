@@ -7,6 +7,26 @@ edition = "2021"
 muzero = ["kz-core/muzero", "kz-selfplay/muzero"]
 default = []
 
+[[bin]]
+name = "play_oriflambe"
+path = "oriflambe_bins/play_oriflambe.rs"
+
+[[bin]]
+name = "play_oriflambe_gui"
+path = "oriflambe_bins/play_oriflambe_gui.rs"
+
+[[bin]]
+name = "evaluate_oriflambe"
+path = "oriflambe_bins/evaluate_oriflambe.rs"
+
+[[bin]]
+name = "evaluate_oriflambe_ratings"
+path = "oriflambe_bins/evaluate_oriflambe_ratings.rs"
+
+[[bin]]
+name = "write_oriflambe_mapping"
+path = "oriflambe_bins/write_oriflambe_mapping.rs"
+
 [dependencies]
 board-game.workspace = true
 hexx.workspace = true

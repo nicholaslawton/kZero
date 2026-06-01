@@ -22,9 +22,4 @@ rust/kz-core/src/mapping/oriflambe
 python/lib/oriflambe.py
 python/lib/oriflambe_metadata.py
 python/main/train_oriflambe.py
-rust/kz-misc/src/bin/play_oriflambe.rs
-rust/kz-misc/src/bin/play_oriflambe_gui.rs
-rust/kz-misc/src/bin/play_oriflambe_gui
-rust/kz-misc/src/bin/evaluate_oriflambe.rs
-rust/kz-misc/src/bin/evaluate_oriflambe_ratings.rs
-rust/kz-misc/src/bin/write_oriflambe_mapping.rs
+rust/kz-misc/oriflambe_bins
