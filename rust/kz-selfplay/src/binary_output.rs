@@ -34,6 +34,11 @@ struct MetaData<'a> {
 
     max_game_length: i32,
     min_game_length: i32,
+    mean_conclusive_game_length: f32,
+    max_conclusive_game_length: i32,
+    p50_conclusive_game_length: i32,
+    p95_conclusive_game_length: i32,
+    p99_conclusive_game_length: i32,
     root_wdl: [f32; 3],
     hit_move_limit: f32,
     mean_available_mv_count: f32,
@@ -58,6 +63,8 @@ pub struct BinaryOutput<B: Board, M: BoardMapper<B>> {
 
     total_root_wdl: WDL<u64>,
     hit_move_limit_count: u64,
+
+    conclusive_game_lengths: Vec<u32>,
 
     total_available_mv_count: u64,
     non_final_position_count: u64,
@@ -120,6 +127,8 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             total_root_wdl: WDL::default(),
             hit_move_limit_count: 0,
 
+            conclusive_game_lengths: Vec::new(),
+
             total_available_mv_count: 0,
             non_final_position_count: 0,
 
@@ -150,6 +159,10 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
         let outcome = final_board.outcome().unwrap_or(Outcome::Draw);
         self.total_root_wdl += outcome.pov(simulation.start_board().next_player()).to_wdl();
         self.hit_move_limit_count += final_board.outcome().is_none() as u8 as u64;
+
+        if outcome != Outcome::Draw {
+            self.conclusive_game_lengths.push(game_length as u32);
+        }
 
         // write the positions
         for (pos_index, position) in positions.iter().enumerate() {
@@ -271,6 +284,8 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
         }
         self.finished = true;
 
+        let conclusive = compute_conclusive_stats(&mut self.conclusive_game_lengths);
+
         let meta = MetaData {
             game: &self.game,
             scalar_names: Scalars::NAMES,
@@ -283,6 +298,11 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             includes_game_start_indices: true,
             max_game_length: self.max_game_length.unwrap_or(-1),
             min_game_length: self.min_game_length.unwrap_or(-1),
+            mean_conclusive_game_length: conclusive.mean,
+            max_conclusive_game_length: conclusive.max,
+            p50_conclusive_game_length: conclusive.p50,
+            p95_conclusive_game_length: conclusive.p95,
+            p99_conclusive_game_length: conclusive.p99,
             root_wdl: (self.total_root_wdl.cast::<f32>() / self.game_count as f32).to_slice(),
             hit_move_limit: self.hit_move_limit_count as f32 / self.game_count as f32,
             mean_available_mv_count: self.total_available_mv_count as f32 / self.non_final_position_count as f32,
@@ -304,6 +324,38 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
 
     pub fn game_count(&self) -> usize {
         self.game_count
+    }
+}
+
+struct ConclusiveStats {
+    mean: f32,
+    max: i32,
+    p50: i32,
+    p95: i32,
+    p99: i32,
+}
+
+fn compute_conclusive_stats(lengths: &mut Vec<u32>) -> ConclusiveStats {
+    if lengths.is_empty() {
+        return ConclusiveStats { mean: -1.0, max: -1, p50: -1, p95: -1, p99: -1 };
+    }
+
+    lengths.sort_unstable();
+    let n = lengths.len();
+    let sum: u64 = lengths.iter().map(|&l| l as u64).sum();
+
+    fn percentile(sorted: &[u32], pct: f32) -> i32 {
+        let idx = (pct * sorted.len() as f32).ceil() as usize;
+        let idx = idx.saturating_sub(1).min(sorted.len() - 1);
+        sorted[idx] as i32
+    }
+
+    ConclusiveStats {
+        mean: sum as f32 / n as f32,
+        max: lengths[n - 1] as i32,
+        p50: percentile(lengths, 0.50),
+        p95: percentile(lengths, 0.95),
+        p99: percentile(lengths, 0.99),
     }
 }
 

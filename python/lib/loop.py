@@ -491,6 +491,17 @@ class LoopBuffer:
             logger.log("gen-sim-len", "sim length mean", info.mean_simulation_length)
             logger.log("gen-sim-len", "sim length max", info.max_simulation_length)
 
+            if info.mean_conclusive_game_length is not None:
+                logger.log("gen-sim-len", "sim length conclusive mean", info.mean_conclusive_game_length)
+            if info.max_conclusive_game_length >= 0:
+                logger.log("gen-sim-len", "sim length conclusive max", info.max_conclusive_game_length)
+            if info.p50_conclusive_game_length >= 0:
+                logger.log("gen-sim-len", "sim length conclusive p50", info.p50_conclusive_game_length)
+            if info.p95_conclusive_game_length >= 0:
+                logger.log("gen-sim-len", "sim length conclusive p95", info.p95_conclusive_game_length)
+            if info.p99_conclusive_game_length >= 0:
+                logger.log("gen-sim-len", "sim length conclusive p99", info.p99_conclusive_game_length)
+
             if info.root_wdl is not None:
                 logger.log("gen-root-wdl", "w", info.root_wdl[0])
                 logger.log("gen-root-wdl", "d", info.root_wdl[1])

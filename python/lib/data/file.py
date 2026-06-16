@@ -40,6 +40,11 @@ class DataFileInfo:
         self.root_wdl = meta.pop("root_wdl", None)
         self.hit_move_limit = meta.pop("hit_move_limit", None)
         self.includes_simulation_start_indices = meta.pop("includes_game_start_indices", False)
+        self.mean_conclusive_game_length = meta.pop("mean_conclusive_game_length", None)
+        self.max_conclusive_game_length = meta.pop("max_conclusive_game_length", -1)
+        self.p50_conclusive_game_length = meta.pop("p50_conclusive_game_length", -1)
+        self.p95_conclusive_game_length = meta.pop("p95_conclusive_game_length", -1)
+        self.p99_conclusive_game_length = meta.pop("p99_conclusive_game_length", -1)
 
         total_move_count = self.position_count - self.includes_final_positions * self.simulation_count
         self.mean_simulation_length = total_move_count / self.simulation_count
