@@ -64,12 +64,14 @@ class EncoderLayer(nn.Module):
         self.d_k = d_k
         self.d_v = d_v
 
-        self.d_kqv = 2 * d_k + d_v
         self.d_k_total = heads * self.d_k
+        self.d_v_total = heads * self.d_v
 
         # build inner layers
-        self.project_qkv = nn.Linear(d_model, heads * self.d_kqv, bias=False)
-        self.project_out = nn.Linear(heads * d_v, d_model, bias=False)
+        self.project_q = nn.Linear(d_model, self.d_k_total, bias=False)
+        self.project_k = nn.Linear(d_model, self.d_k_total, bias=False)
+        self.project_v = nn.Linear(d_model, self.d_v_total, bias=False)
+        self.project_out = nn.Linear(self.d_v_total, d_model, bias=False)
 
         self.ff = nn.Sequential(
             nn.Linear(d_model, d_ff, bias=False),
@@ -84,13 +86,9 @@ class EncoderLayer(nn.Module):
         # initialize weights according to DeepNet/DeepNorm paper
         self.alpha = alpha
 
-        project_q = self.project_qkv.weight[:self.d_k_total, :]
-        project_k = self.project_qkv.weight[self.d_k_total:2 * self.d_k_total, :]
-        project_v = self.project_qkv.weight[2 * self.d_k_total:, :]
-
-        for w in [self.ff[0].weight, self.ff[2].weight, project_v, self.project_out.weight]:
+        for w in [self.ff[0].weight, self.ff[2].weight, self.project_v.weight, self.project_out.weight]:
             nn.init.xavier_normal_(w, gain=beta)
-        for w in [project_q, project_k]:
+        for w in [self.project_q.weight, self.project_k.weight]:
             nn.init.xavier_normal_(w, gain=1)
 
     def forward_with_weights(self, input):
@@ -100,13 +98,10 @@ class EncoderLayer(nn.Module):
         (n, b, c) = input.shape
         assert c == self.d_model
 
-        # input projection
-        qkv = self.project_qkv(input.view(n * b, self.d_model)).view(n, b * heads, self.d_kqv)
-
-        # split
-        q = qkv[:, :, :self.d_k]
-        k = qkv[:, :, self.d_k:2 * self.d_k]
-        v = qkv[:, :, 2 * self.d_k:]
+        # input projection (separate Q/K/V to avoid ONNX Slice ops)
+        q = self.project_q(input.view(n * b, self.d_model)).view(n, b * heads, self.d_k)
+        k = self.project_k(input.view(n * b, self.d_model)).view(n, b * heads, self.d_k)
+        v = self.project_v(input.view(n * b, self.d_model)).view(n, b * heads, self.d_v)
 
         # main attention calculation
         # weights: (b*h, n_q, n_k)
