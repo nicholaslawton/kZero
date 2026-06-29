@@ -26,6 +26,14 @@ from lib.util import DEVICE, print_param_count, clean_folder, stochastic_round, 
 
 CHECK_BATCH_SIZE = 2
 SAVE_BATCH_SIZE = 2
+STOP_FLAG_ENV = "STOP_FLAG_PATH"
+
+
+def stop_requested() -> bool:
+    path = os.environ.get(STOP_FLAG_ENV)
+    if not path:
+        return False
+    return os.path.exists(path)
 
 
 @dataclass
@@ -305,6 +313,9 @@ class LoopSettings:
                 # Check for termination condition
                 if self.target_gen > 0 and gi >= self.target_gen:
                     print(f"Reached target_gen={self.target_gen}, terminating training")
+                    break
+                if stop_requested():
+                    print("Stop requested, terminating after completing current generation")
                     break
         finally:
             client.send_stop()
