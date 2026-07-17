@@ -10,6 +10,7 @@ pub enum Game {
     ArimaaSplit,
     Go { size: u8 },
     Oriflambe,
+    OriflambeRepetition,
 }
 
 impl Game {
@@ -21,6 +22,7 @@ impl Game {
             "ataxx" => return Some(Game::Ataxx { size: 7 }),
             "arimaa-split" => return Some(Game::ArimaaSplit),
             "oriflambe" => return Some(Game::Oriflambe),
+            "oriflambe-repetition" => return Some(Game::OriflambeRepetition),
             _ => {}
         };
 
@@ -52,6 +54,7 @@ impl Display for Game {
             Game::ArimaaSplit => write!(f, "arimaa-split"),
             Game::Go { size } => write!(f, "go-{}", size),
             Game::Oriflambe => write!(f, "oriflambe"),
+            Game::OriflambeRepetition => write!(f, "oriflambe-repetition"),
         }
     }
 }

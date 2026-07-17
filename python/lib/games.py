@@ -283,5 +283,6 @@ GAMES = {
     ),
 }
 
-from lib.oriflambe import ORIFLAMBE_GAME
+from lib.oriflambe import ORIFLAMBE_GAME, ORIFLAMBE_REPETITION_GAME
 GAMES["oriflambe"] = ORIFLAMBE_GAME
+GAMES["oriflambe-repetition"] = ORIFLAMBE_REPETITION_GAME

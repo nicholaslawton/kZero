@@ -21,6 +21,7 @@ use kz_core::mapping::ataxx::AtaxxStdMapper;
 use kz_core::mapping::chess::{ChessHistoryMapper, ChessStdMapper};
 use kz_core::mapping::go::GoStdMapper;
 use kz_core::mapping::oriflambe::board::OriflambeBoard;
+use kz_core::mapping::oriflambe::repetition::{OriflambeRepetitionBoard, OriflambeRepetitionMapper};
 use kz_core::mapping::oriflambe::std_mapper::OriflambeStdMapper;
 use kz_core::mapping::sttt::STTTStdMapper;
 use kz_core::mapping::ttt::TTTStdMapper;
@@ -69,6 +70,7 @@ fn main() {
             GoStdMapper::new(size, true),
         ),
         Game::Oriflambe => main_impl(&args, OriflambeBoard::default, OriflambeStdMapper),
+        Game::OriflambeRepetition => main_impl(&args, OriflambeRepetitionBoard::default, OriflambeRepetitionMapper),
     }
 }
 
