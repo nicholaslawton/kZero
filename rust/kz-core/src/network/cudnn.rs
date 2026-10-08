@@ -82,7 +82,6 @@ impl<B: Board, M: BoardMapper<B>> CudaNetwork<B, M> {
         // the number and shape of outputs has been checked already
         decode_output_prepared(self.mapper, inputs, &relevant_outputs)
     }
-
 }
 
 impl<B: Board, M: BoardMapper<B>> Network<B> for CudaNetwork<B, M> {

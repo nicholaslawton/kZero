@@ -337,7 +337,13 @@ struct ConclusiveStats {
 
 fn compute_conclusive_stats(lengths: &mut Vec<u32>) -> ConclusiveStats {
     if lengths.is_empty() {
-        return ConclusiveStats { mean: -1.0, max: -1, p50: -1, p95: -1, p99: -1 };
+        return ConclusiveStats {
+            mean: -1.0,
+            max: -1,
+            p50: -1,
+            p95: -1,
+            p99: -1,
+        };
     }
 
     lengths.sort_unstable();

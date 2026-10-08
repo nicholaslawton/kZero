@@ -105,7 +105,6 @@ pub fn decode_output<B: Board, P: PolicyMapper<B>>(
         .collect()
 }
 
-
 pub fn decode_output_prepared<B: Board, P: PolicyMapper<B>>(
     policy_mapper: P,
     inputs: &[impl Borrow<PreparedEvalInput<B>>],
