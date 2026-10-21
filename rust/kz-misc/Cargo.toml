@@ -28,6 +28,8 @@ name = "write_oriflambe_mapping"
 path = "oriflambe_bins/write_oriflambe_mapping.rs"
 
 [dependencies]
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["blocking", "json"] }
 board-game.workspace = true
 hexx.workspace = true
 kn-cuda-eval.workspace = true
