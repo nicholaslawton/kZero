@@ -85,6 +85,8 @@ lru = "0.7.8" # stuck at old version due to not allowing empty caches any more
 memchr = "2.6.3"
 ndarray = "0.15.6"
 num-traits = "0.2.16"
+openssl = "0.10.81"
+openssl-sys = "0.9.117"
 palette = { version = "0.7.3", default-features = false, features = ["std"] }
 prost = "0.12.1"
 prost-build = "0.12.1"
