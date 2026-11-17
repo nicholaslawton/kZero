@@ -26,6 +26,15 @@ pub struct StartupSettings {
 
     pub saved_state_channels: usize,
     pub eval_random_symmetries: bool,
+
+    #[serde(default = "default_batch_wait_ms")]
+    pub max_batch_wait_ms: u32,
+    #[serde(default)]
+    pub batch_timings: bool,
+}
+
+fn default_batch_wait_ms() -> u32 {
+    100
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

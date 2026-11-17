@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::hash::Hash;
+use std::time::Duration;
 
 use board_game::board::Board;
 use crossbeam::thread::Scope;
@@ -19,7 +20,7 @@ use kz_core::network::job_channel::job_pair;
 use kz_core::network::ZeroEvaluation;
 use kz_util::math::ceil_div;
 
-use crate::server::executor::{batched_executor_loop, RunCondition};
+use crate::server::executor::{batched_executor_loop_with_settings, BatchingSettings, RunCondition};
 use crate::server::generator_alphazero::generator_alphazero_main;
 use crate::server::protocol::{Evals, GeneratorUpdate, Settings, StartupSettings};
 use crate::server::server::{GraphSender, ZeroSpecialization};
@@ -47,8 +48,14 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
 
         let concurrent_games = ceil_div((gpu_threads + 1) * gpu_batch_size, search_batch_size);
         let eval_job_count = gpu_batch_size / search_batch_size;
+        let batching = BatchingSettings {
+            max_wait: (startup.max_batch_wait_ms != 0).then(|| Duration::from_millis(startup.max_batch_wait_ms.into())),
+            timings: startup.batch_timings,
+            report: true,
+        };
 
         println!("Spawning {} games", concurrent_games);
+        println!("AlphaZero batching: {:?}", batching);
 
         let mut settings_senders: Vec<Sender<Settings>> = vec![];
         let mut graph_senders: Vec<GraphSender<Graph>> = vec![];
@@ -103,9 +110,10 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
             s.builder()
                 .name(format!("gpu-expand-{}-{}", device_id, local_id))
                 .spawn(move |_| {
-                    batched_executor_loop(
+                    batched_executor_loop_with_settings(
                         gpu_batch_size,
                         RunCondition::JobCount(eval_job_count),
+                        batching,
                         graph_receiver,
                         eval_server,
                         |graph| graph.map_left(|graph| CudaNetwork::new(mapper, &graph, gpu_batch_size, device)),

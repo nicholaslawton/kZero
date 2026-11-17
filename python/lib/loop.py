@@ -53,6 +53,9 @@ class FixedSelfplaySettings:
     saved_state_channels: int
     eval_random_symmetries: bool
 
+    max_batch_wait_ms: int = 100
+    batch_timings: bool = False
+
     def to_startup(self, output_folder: str, first_gen: int):
         return StartupSettings(
             game=self.game.name,
@@ -68,6 +71,8 @@ class FixedSelfplaySettings:
             search_batch_size=self.search_batch_size,
             saved_state_channels=self.saved_state_channels,
             eval_random_symmetries=self.eval_random_symmetries,
+            max_batch_wait_ms=self.max_batch_wait_ms,
+            batch_timings=self.batch_timings,
         )
 
 

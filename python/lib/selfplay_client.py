@@ -26,6 +26,9 @@ class StartupSettings:
     saved_state_channels: int
     eval_random_symmetries: bool
 
+    max_batch_wait_ms: int = 100
+    batch_timings: bool = False
+
     def as_dict(self):
         return dataclasses.asdict(self)
 

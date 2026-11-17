@@ -51,6 +51,125 @@ Much effort was put into optimizing this system:
 * Each GPU can have multiple executor threads, enabling concurrent batching, memory transfers and execution.
 * Multiple GPUs can be used at full speed.
 
+#### Bounded-wait AlphaZero batching
+
+AlphaZero self-play retains its normal full-batch/job-count thresholds, but also
+executes pending work after `max_batch_wait_ms` (provisionally 100 ms). This avoids
+stalling when too few games remain to fill a batch. It is not a stop/resume
+implementation. A value of `0` restores threshold-only batching for baseline
+measurements; that mode can stall at low concurrency.
+
+The deadline starts when a job is buffered by an executor, not when it enters the
+shared channel. New arrivals do not reset it. It bounds batching wait, not channel
+backpressure, CPU scheduling, inference execution, or total time to finish a move.
+Network unloading/loading resets buffered-work ages, excluding intentional pauses.
+Other executor callers retain their existing policies; MuZero is unchanged.
+
+For the Oriflambe wrapper, run from the workspace:
+
+```sh
+nu alpha-oriflambe/train.nu start --arch hybrid --max-batch-wait-ms 100 --batch-timings
+```
+
+`--batch-timings` is optional and disabled by default. Configuration is passed
+through Python's `FixedSelfplaySettings` / `StartupSettings` to the Rust server.
+Each AlphaZero executor emits `Batching {json}` summaries approximately every
+60 seconds while executing, on network changes, and at exit. Cheap counters report
+execution triggers, useful positions, job participations, and useful batch fill.
+There is no per-request logging.
+
+Inspect or export reports from the workspace with the Oriflambe wrapper:
+
+```sh
+nu alpha-oriflambe/train.nu metrics batching
+nu alpha-oriflambe/train.nu metrics batching --latest
+nu alpha-oriflambe/train.nu metrics batching --output batching-results.json
+nu alpha-oriflambe/train.nu metrics batching --log archived-selfplay.log --raw
+```
+
+The default view shows per-window throughput, fill, deadline counts, and normal
+wait/evaluation timing highlights. `--latest` shows the newest full report as
+expanded JSON so nested timing distributions are visible;
+`--raw` returns all full records for Nushell pipelines. `--output` always saves
+all complete reports, including nested timings, and refuses to overwrite a file.
+An unfinished final log line is skipped with a warning if it is a batching report;
+malformed complete reports are errors. Save results before starting another
+session, which replaces the logs. Retain the full selfplay log as configuration
+context when sharing results. Exporting does not stop or change training.
+
+Detailed timing mode adds monotonic timestamps around evaluation and retains at
+most the latest 4096 samples per executor per reporting window. Summaries give
+p50/p95/p99/max wait, host-observed evaluation duration, and deadline overshoot,
+separately for threshold, deadline, and disconnect executions. Evaluation duration
+includes input encoding, transfers, synchronized CUDA evaluation, decoding, and
+the evaluation callback's bookkeeping; it is not GPU-kernel-only time. No extra
+GPU synchronization is added. Normal batch-assembly measurements may include CPU
+descheduling or time spent finishing earlier batches.
+
+Partial batches are supported but padded to the configured CUDA batch size.
+Useful fill and positions/second therefore matter more than raw execution count.
+Summary throughput windows can include idle time; use the benchmark's explicit
+measurement window for comparisons.
+
+##### Measuring and selecting a deadline
+
+Build once, then run `target/release/batching_bench` from `rust/`. The harness uses
+the actual Oriflambe-repetition self-play generator, one GPU executor, a fixed
+network, and the search settings from a saved training `settings.json`. It keeps
+games in memory and writes neither training state nor self-play data. Use a
+settings file and network from the same experiment. It does not reproduce
+multi-executor or multi-GPU contention; validate those configurations in training.
+
+```sh
+cargo build --release -p kz-selfplay --bin batching_bench
+
+target/release/batching_bench \
+  --settings ../data/loop/oriflambe/training/gen_0/settings.json \
+  --network ../data/loop/oriflambe/training/gen_8/network.onnx \
+  --concurrent-games 32 --warmup-seconds 30 --seconds 120 \
+  --max-batch-wait-ms 0 --batch-timings
+```
+
+Use the actual file paths for your experiment: settings are saved at the first
+generation of each session, not necessarily every generation. `--device` selects
+the GPU (default 0); the harness does not run other GPUs. Do not benchmark alongside
+training or other GPU workloads.
+
+1. Record GPU/CPU, software versions, network, settings, and thermal/power state.
+   At normal concurrency, measure the threshold-only baseline above.
+2. Repeat with deadlines around the measured normal wait distribution, for
+   example 10, 25, 50, 100, and 250 ms. Repeat each case at least three times,
+   alternating order, with the same warm-up and measurement durations.
+3. Compare `BatchingBenchmark {json}` final results: useful positions/second,
+   moves/second, and fill ratio. Games/second is secondary because games vary in
+   length. Search randomness means runs are comparable, not identical trajectories.
+4. Repeat with detailed timings disabled to quantify their overhead. Also compare
+   the threshold-only timings-off baseline to bound scheduler/counter overhead.
+   Measuring the entire change against the old executor requires running the same
+   workload on the pre-change revision on the same hardware.
+5. Test `--concurrent-games 1`, then a few games, with bounded waiting enabled.
+   These must make move progress. Threshold-only low-concurrency runs deliberately
+   stall but the harness still ends at its time limit.
+
+The final benchmark line excludes network loading and warm-up. Periodic executor
+summaries include warm-up, so do not pool their samples blindly with the final
+throughput window. The benchmark reports zero progress explicitly if stalled.
+Use longer windows when a slow model cannot finish a move in a short run.
+`--dummy` instead of `--network` smoke-tests the harness without CUDA inference;
+those timings cannot tune GPU batching.
+
+Choose a deadline that avoids low-concurrency stalls while rarely forcing partial
+batches at normal load. Target no more than a provisional 2% throughput regression
+across repeated runs, accounting for noise. If no fixed value works across actual
+workloads, use these measurements to justify bounded adaptation rather than
+introducing it prematurely. The 100 ms default is not a hardware-tuned result.
+
+Development tests use fake evaluation and do not execute in normal training:
+
+```sh
+cargo test -p kz-selfplay --lib server::executor
+```
+
 ### Training (Python)
 
 Finally the training component is shown in the figure below.
