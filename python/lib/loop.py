@@ -4,7 +4,9 @@ import itertools
 import json
 import os
 import shutil
+import socket
 import time
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional, Tuple, Iterator, List
@@ -27,6 +29,8 @@ from lib.util import DEVICE, print_param_count, clean_folder, stochastic_round, 
 CHECK_BATCH_SIZE = 2
 SAVE_BATCH_SIZE = 2
 STOP_FLAG_ENV = "STOP_FLAG_PATH"
+DRAIN_FLAG_ENV = "DRAIN_FLAG_PATH"
+DRAIN_DONE_ENV = "DRAIN_DONE_PATH"
 
 
 def stop_requested() -> bool:
@@ -34,6 +38,10 @@ def stop_requested() -> bool:
     if not path:
         return False
     return os.path.exists(path)
+
+def drain_requested() -> bool:
+    path = os.environ.get(DRAIN_FLAG_ENV)
+    return bool(path) and os.path.exists(path)
 
 
 @dataclass
@@ -204,6 +212,24 @@ class LoopSettings:
             logger: Logger, plotter: Optional[LogPlotter],
             network: nn.Module,
     ):
+        game = self.fixed_settings.game
+        config_path = os.path.join(self.selfplay_path, "drain-config.json")
+        resume_config = {
+            "game": game.name,
+            "muzero": self.muzero,
+            "start_pos": self.fixed_settings.start_pos,
+            "games_per_gen": self.fixed_settings.simulations_per_gen,
+            "search_batch_size": self.fixed_settings.search_batch_size,
+            "eval_random_symmetries": self.fixed_settings.eval_random_symmetries,
+            "selfplay_settings": self.selfplay_settings.as_dict(),
+        }
+        partial_checkpoint = start_gen.simulations_path + ".checkpoint.json"
+        if os.path.exists(partial_checkpoint):
+            with open(config_path) as f:
+                saved_config = json.load(f)
+            if saved_config != resume_config:
+                raise ValueError(f"Selfplay settings differ from partial generation checkpoint: {config_path}")
+
         print("Saving current settings")
         os.makedirs(start_gen.train_path, exist_ok=True)
         with open(start_gen.settings_path, "w") as settings_f:
@@ -212,7 +238,6 @@ class LoopSettings:
         print("Main network parameters:")
         print_param_count(network)
 
-        game = self.fixed_settings.game
         optimizer = self.optimizer(network.parameters())
 
         startup_settings = self.fixed_settings.to_startup(
@@ -232,7 +257,37 @@ class LoopSettings:
         else:
             initial_onnx_path = self.save_tmp_onnx_network(network, f"network_{start_gen.gi}")
 
+        drain_finished = False
+        monitor_stop = threading.Event()
+        monitor_error = []
         client = SelfplayClient(self.port)
+
+        def monitor_drain():
+            while not monitor_stop.wait(0.5):
+                if drain_requested():
+                    try:
+                        if self.muzero or self.only_generate or self.target_gen > 0:
+                            raise ValueError("Drain requires AlphaZero training with no target generation")
+                        if self.fixed_settings.max_batch_wait_ms == 0:
+                            raise ValueError("Drain requires a nonzero inference batching deadline")
+                        tmp = config_path + ".tmp"
+                        with open(tmp, "w") as f:
+                            json.dump(resume_config, f)
+                            f.flush()
+                            os.fsync(f.fileno())
+                        os.replace(tmp, config_path)
+                        directory_fd = os.open(self.selfplay_path, os.O_RDONLY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                        client.send_drain()
+                    except Exception as e:
+                        monitor_error.append(e)
+                        client.s.shutdown(socket.SHUT_RDWR)
+                    return
+
+        monitor = threading.Thread(target=monitor_drain, name="drain-monitor", daemon=True)
         try:
             client.send_startup_settings(startup_settings)
             client.send_new_settings(self.selfplay_settings)
@@ -240,6 +295,7 @@ class LoopSettings:
                 client.send_dummy_network()
             else:
                 client.send_new_network(initial_onnx_path)
+            monitor.start()
 
             for gi in itertools.count(start_gen.gi):
                 if plotter is not None:
@@ -251,7 +307,19 @@ class LoopSettings:
 
                 print(f"Waiting for gen {gi} simulations")
                 gen_start = time.perf_counter()
-                actual_gi = client.wait_for_file()
+                update = client.wait_for_update()
+                if "Drained" in update:
+                    drained = update["Drained"]
+                    if drained["index"] != gi:
+                        raise RuntimeError(f"Unexpected drained generation, expected {gi}, got {drained['index']}")
+                    print(f"Drain complete: generation {gi} has {drained['games']} saved games")
+                    drain_finished = True
+                    break
+                if "DrainRejected" in update:
+                    raise RuntimeError(f"Drain rejected: {update['DrainRejected']['reason']}")
+                if update == "Stopped":
+                    raise RuntimeError("Selfplay server stopped")
+                actual_gi = update["FinishedFile"]["index"]
                 logger.log("time", "selfplay", time.perf_counter() - gen_start)
                 assert gi == actual_gi, f"Unexpected finished generation, expected {gi} got {actual_gi}"
 
@@ -316,14 +384,26 @@ class LoopSettings:
                 gen.cleanup_old_pt_files(gen.gi, keep_count=3)
 
                 # Check for termination condition
-                if self.target_gen > 0 and gi >= self.target_gen:
+                if self.target_gen > 0 and gi >= self.target_gen and not drain_requested():
                     print(f"Reached target_gen={self.target_gen}, terminating training")
                     break
-                if stop_requested():
+                if stop_requested() and not drain_requested():
                     print("Stop requested, terminating after completing current generation")
                     break
         finally:
+            monitor_stop.set()
+            if monitor.is_alive():
+                monitor.join()
+            if monitor_error:
+                raise RuntimeError("Failed to request selfplay drain") from monitor_error[0]
             client.send_stop()
+            if drain_finished:
+                if client.wait_for_update() != "Stopped":
+                    raise RuntimeError("Selfplay server did not acknowledge stop after draining")
+                done_path = os.environ.get(DRAIN_DONE_ENV)
+                if not done_path:
+                    raise RuntimeError("DRAIN_DONE_PATH is required to acknowledge drain completion")
+                Path(done_path).touch()
 
     def load_start_state(self) -> Tuple['Generation', 'LoopBuffer', Logger, nn.Module]:
         game = self.fixed_settings.game
@@ -348,7 +428,13 @@ class LoopSettings:
                 if prev is None:
                     print("Starting new run")
                     logger = Logger()
-                    network = torch.jit.script(self.initial_network())
+                    initial_path = os.path.join(gen.train_path, "initial_network.pt")
+                    if os.path.exists(gen.simulations_path + ".checkpoint.json"):
+                        network = torch.jit.load(initial_path)
+                    else:
+                        network = torch.jit.script(self.initial_network())
+                        os.makedirs(gen.train_path, exist_ok=True)
+                        torch.jit.save(network, initial_path)
                 else:
                     print(f"Continuing run, first gen {gi}")
                     logger = Logger.load(self.log_path)

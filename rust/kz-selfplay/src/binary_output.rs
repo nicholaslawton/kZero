@@ -1,5 +1,5 @@
 use std::cmp::{max, min};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufWriter, Seek, Write};
 use std::marker::PhantomData;
@@ -10,7 +10,7 @@ use board_game::pov::NonPov;
 use board_game::wdl::WDL;
 use bytemuck::cast_slice;
 use internal_iterator::InternalIterator;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use kz_core::mapping::bit_buffer::BitBuffer;
 use kz_core::mapping::BoardMapper;
@@ -44,6 +44,26 @@ struct MetaData<'a> {
     mean_available_mv_count: f32,
 
     scalar_names: &'static [&'static str],
+}
+
+#[derive(Serialize, Deserialize)]
+struct PartialOutput {
+    version: u32,
+    game: String,
+    input_bool_shape: Vec<usize>,
+    input_scalar_count: usize,
+    policy_shape: Vec<usize>,
+    game_count: usize,
+    position_count: usize,
+    max_game_length: Option<i32>,
+    min_game_length: Option<i32>,
+    total_root_wdl: [u64; 3],
+    hit_move_limit_count: u64,
+    conclusive_game_lengths: Vec<u32>,
+    total_available_mv_count: u64,
+    non_final_position_count: u64,
+    next_offset: u64,
+    game_start_indices: Vec<u64>,
 }
 
 #[derive(Debug)]
@@ -104,6 +124,9 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             "Binary output path should not have an extension, .bin and .json are added automatically"
         );
 
+        if path.with_extension("checkpoint.json").exists() {
+            return Self::resume(path, game, mapper);
+        }
         //TODO try buffer sizes again
         let bin_write = BufWriter::new(File::create(path.with_extension("bin"))?);
         let off_write = BufWriter::new(File::create(path.with_extension("off"))?);
@@ -139,6 +162,116 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
             mapper,
             ph: PhantomData,
         })
+    }
+
+    fn resume(path: PathBuf, game: &str, mapper: M) -> io::Result<Self> {
+        let invalid = |message: &str| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid selfplay checkpoint {}: {}", path.display(), message),
+            )
+        };
+        if path.with_extension("json").exists() {
+            return Err(invalid("completed output and partial checkpoint both exist"));
+        }
+        let saved: PartialOutput = serde_json::from_reader(File::open(path.with_extension("checkpoint.json"))?)?;
+        if saved.version != 1
+            || saved.game != game
+            || saved.input_bool_shape != mapper.input_bool_shape()
+            || saved.input_scalar_count != mapper.input_scalar_count()
+            || saved.policy_shape != mapper.policy_shape()
+            || saved.game_count == 0
+            || saved.game_count != saved.game_start_indices.len()
+            || saved.position_count == 0
+            || saved.game_start_indices.first() != Some(&0)
+            || saved.game_start_indices.windows(2).any(|w| w[0] >= w[1])
+            || saved
+                .game_start_indices
+                .last()
+                .is_some_and(|&index| index >= saved.position_count as u64)
+        {
+            return Err(invalid("incompatible metadata or game indices"));
+        }
+        let bin = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.with_extension("bin"))?;
+        let off = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.with_extension("off"))?;
+        if bin.metadata()?.len() != saved.next_offset || off.metadata()?.len() != saved.position_count as u64 * 8 {
+            return Err(invalid("data or offset file length does not match checkpoint"));
+        }
+        let mut bin_write = BufWriter::new(bin);
+        let mut off_write = BufWriter::new(off);
+        bin_write.seek(io::SeekFrom::End(0))?;
+        off_write.seek(io::SeekFrom::End(0))?;
+        let json_tmp_write = BufWriter::new(File::create(path.with_extension("json.tmp"))?);
+        Ok(Self {
+            game: saved.game,
+            path,
+            bin_write,
+            off_write,
+            json_tmp_write,
+            game_count: saved.game_count,
+            position_count: saved.position_count,
+            max_game_length: saved.max_game_length,
+            min_game_length: saved.min_game_length,
+            total_root_wdl: WDL {
+                win: saved.total_root_wdl[0],
+                draw: saved.total_root_wdl[1],
+                loss: saved.total_root_wdl[2],
+            },
+            hit_move_limit_count: saved.hit_move_limit_count,
+            conclusive_game_lengths: saved.conclusive_game_lengths,
+            total_available_mv_count: saved.total_available_mv_count,
+            non_final_position_count: saved.non_final_position_count,
+            next_offset: saved.next_offset,
+            game_start_indices: saved.game_start_indices,
+            finished: false,
+            mapper,
+            ph: PhantomData,
+        })
+    }
+
+    pub fn checkpoint(&mut self) -> io::Result<()> {
+        if self.game_count == 0 {
+            return Ok(());
+        }
+        self.bin_write.flush()?;
+        self.off_write.flush()?;
+        self.bin_write.get_ref().sync_all()?;
+        self.off_write.get_ref().sync_all()?;
+        let state = PartialOutput {
+            version: 1,
+            game: self.game.clone(),
+            input_bool_shape: self.mapper.input_bool_shape().to_vec(),
+            input_scalar_count: self.mapper.input_scalar_count(),
+            policy_shape: self.mapper.policy_shape().to_vec(),
+            game_count: self.game_count,
+            position_count: self.position_count,
+            max_game_length: self.max_game_length,
+            min_game_length: self.min_game_length,
+            total_root_wdl: [
+                self.total_root_wdl.win,
+                self.total_root_wdl.draw,
+                self.total_root_wdl.loss,
+            ],
+            hit_move_limit_count: self.hit_move_limit_count,
+            conclusive_game_lengths: self.conclusive_game_lengths.clone(),
+            total_available_mv_count: self.total_available_mv_count,
+            non_final_position_count: self.non_final_position_count,
+            next_offset: self.next_offset,
+            game_start_indices: self.game_start_indices.clone(),
+        };
+        let tmp = self.path.with_extension("checkpoint.tmp");
+        let mut file = File::create(&tmp)?;
+        serde_json::to_writer(&mut file, &state)?;
+        file.sync_all()?;
+        std::fs::rename(tmp, self.path.with_extension("checkpoint.json"))?;
+        File::open(self.path.parent().unwrap())?.sync_all()?;
+        Ok(())
     }
 
     pub fn append(&mut self, simulation: &Simulation<B>) -> io::Result<()> {
@@ -314,10 +447,18 @@ impl<B: Board, M: BoardMapper<B>> BinaryOutput<B, M> {
         self.json_tmp_write.flush()?;
         self.bin_write.flush()?;
         self.off_write.flush()?;
+        self.json_tmp_write.get_ref().sync_all()?;
+        self.bin_write.get_ref().sync_all()?;
+        self.off_write.get_ref().sync_all()?;
 
         let path_json_tmp = self.path.with_extension("json.tmp");
         let path_json = self.path.with_extension("json");
         std::fs::rename(path_json_tmp, path_json)?;
+        let checkpoint = self.path.with_extension("checkpoint.json");
+        if checkpoint.exists() {
+            std::fs::remove_file(checkpoint)?;
+        }
+        File::open(self.path.parent().unwrap())?.sync_all()?;
 
         Ok(())
     }
@@ -438,5 +579,126 @@ impl Scalars {
 
         assert_eq!(result.len(), Self::NAMES.len());
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use board_game::board::BoardMoves;
+    use board_game::games::ttt::TTTBoard;
+    use board_game::util::coord::Coord3;
+    use kz_core::mapping::ttt::TTTStdMapper;
+    use kz_core::network::dummy::{uniform_policy, uniform_values};
+    use kz_core::network::ZeroEvaluation;
+    use std::borrow::Cow;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+
+    struct TestDir(PathBuf);
+    impl TestDir {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "kzero-drain-test-{}-{}",
+                std::process::id(),
+                NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    fn game() -> Simulation<'static, TTTBoard> {
+        let board = TTTBoard::default();
+        let played_mv = Coord3::from_index(0);
+        let evaluation = ZeroEvaluation {
+            values: uniform_values(),
+            policy: Cow::Owned(uniform_policy(board.available_moves().unwrap().count())),
+        };
+        Simulation {
+            positions: vec![Position {
+                board: board.clone(),
+                is_full_search: true,
+                played_mv,
+                zero_visits: 1,
+                zero_evaluation: evaluation.clone(),
+                net_evaluation: evaluation,
+            }],
+            final_board: board.clone_and_play(played_mv).unwrap(),
+        }
+    }
+
+    #[test]
+    fn checkpoint_resume_matches_uninterrupted_output() {
+        let dir = TestDir::new();
+        let expected = dir.0.join("expected");
+        let actual = dir.0.join("actual");
+        let mut baseline = BinaryOutput::new(&expected, "ttt", TTTStdMapper).unwrap();
+        let mut resumed = BinaryOutput::new(&actual, "ttt", TTTStdMapper).unwrap();
+        for _ in 0..3 {
+            baseline.append(&game()).unwrap();
+        }
+        resumed.append(&game()).unwrap();
+        resumed.checkpoint().unwrap();
+        drop(resumed);
+        let mut resumed = BinaryOutput::new(&actual, "ttt", TTTStdMapper).unwrap();
+        assert_eq!(resumed.game_count(), 1);
+        resumed.append(&game()).unwrap();
+        resumed.checkpoint().unwrap();
+        drop(resumed);
+        let mut resumed = BinaryOutput::new(&actual, "ttt", TTTStdMapper).unwrap();
+        resumed.append(&game()).unwrap();
+        baseline.finish().unwrap();
+        resumed.finish().unwrap();
+        for extension in ["bin", "off", "json"] {
+            assert_eq!(
+                std::fs::read(expected.with_extension(extension)).unwrap(),
+                std::fs::read(actual.with_extension(extension)).unwrap(),
+                "{extension} differs after resume"
+            );
+        }
+        assert!(!actual.with_extension("checkpoint.json").exists());
+    }
+
+    #[test]
+    fn invalid_checkpoint_never_truncates_data() {
+        let dir = TestDir::new();
+        let path = dir.0.join("games");
+        let mut output = BinaryOutput::new(&path, "ttt", TTTStdMapper).unwrap();
+        output.append(&game()).unwrap();
+        output.checkpoint().unwrap();
+        drop(output);
+        let bin = path.with_extension("bin");
+        OpenOptions::new()
+            .append(true)
+            .open(&bin)
+            .unwrap()
+            .write_all(b"extra")
+            .unwrap();
+        let before = std::fs::read(&bin).unwrap();
+        assert!(BinaryOutput::new(&path, "ttt", TTTStdMapper).is_err());
+        assert_eq!(std::fs::read(&bin).unwrap(), before);
+    }
+
+    #[test]
+    fn empty_checkpoint_does_not_create_partial_metadata() {
+        let dir = TestDir::new();
+        let path = dir.0.join("games");
+        let mut output = BinaryOutput::<TTTBoard, _>::new(&path, "ttt", TTTStdMapper).unwrap();
+        output.checkpoint().unwrap();
+        drop(output);
+        assert!(!path.with_extension("checkpoint.json").exists());
+        assert_eq!(
+            BinaryOutput::<TTTBoard, _>::new(&path, "ttt", TTTStdMapper)
+                .unwrap()
+                .game_count(),
+            0
+        );
     }
 }

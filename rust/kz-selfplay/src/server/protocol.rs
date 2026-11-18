@@ -45,6 +45,7 @@ pub enum Command {
     NewNetwork(String),
     WaitForNewNetwork,
     UseDummyNetwork,
+    Drain,
     Stop,
 }
 
@@ -61,6 +62,15 @@ pub struct Evals {
 #[derive(Debug)]
 pub enum GeneratorUpdate<B: Board> {
     Stop,
+    DrainStarted {
+        generators: usize,
+    },
+    GeneratorDrained {
+        generator_id: usize,
+    },
+    DrainRejected {
+        reason: String,
+    },
 
     StartedSimulation {
         generator_id: usize,
@@ -85,6 +95,8 @@ pub enum GeneratorUpdate<B: Board> {
 pub enum ServerUpdate {
     Stopped,
     FinishedFile { index: u32 },
+    Drained { index: u32, games: usize },
+    DrainRejected { reason: String },
 }
 
 //TODO split this into AlphaZero and MuZero structs, the overlap is getting pretty small

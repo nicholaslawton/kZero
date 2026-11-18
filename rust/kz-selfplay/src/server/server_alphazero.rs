@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use board_game::board::Board;
@@ -40,6 +41,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Send + Sync + Clone + 'static,
         update_sender: Sender<GeneratorUpdate<B>>,
+        draining: Arc<Mutex<bool>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Graph>>) {
         let gpu_batch_size = startup.gpu_batch_size;
         let search_batch_size = startup.search_batch_size;
@@ -78,6 +80,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
             let mapper = mapper;
             let update_sender = update_sender.clone();
             let eval_random_symmetries = startup.eval_random_symmetries;
+            let draining = draining.clone();
 
             let (settings_sender, settings_receiver) = flume::bounded(1);
             settings_senders.push(settings_sender);
@@ -92,6 +95,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
                     mapper,
                     eval_random_symmetries,
                     update_sender,
+                    draining,
                 )
                 .await;
             });

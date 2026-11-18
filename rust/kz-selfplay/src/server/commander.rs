@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader, Read};
 use std::str;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use board_game::board::Board;
 use flume::Sender;
@@ -15,6 +15,9 @@ pub fn commander_main<B: Board, G>(
     settings_senders: Vec<Sender<Settings>>,
     graph_senders: Vec<GraphSender<G>>,
     update_sender: Sender<GeneratorUpdate<B>>,
+    draining: Arc<Mutex<bool>>,
+    max_batch_wait_ms: u32,
+    muzero: bool,
     load_graph: impl Fn(&str) -> G,
 ) {
     let send_graph_command = |command: GraphMessage<G>| {
@@ -55,6 +58,28 @@ pub fn commander_main<B: Board, G>(
             Some(Command::UseDummyNetwork) => {
                 println!("Switching to dummy network");
                 send_graph_command(Some(NetworkOrDummy::Right(DummyNetwork)));
+            }
+            Some(Command::Drain) => {
+                if muzero || max_batch_wait_ms == 0 {
+                    let reason = if muzero {
+                        "Drain is only supported for AlphaZero"
+                    } else {
+                        "Drain requires a nonzero inference batching deadline"
+                    };
+                    update_sender
+                        .send(GeneratorUpdate::DrainRejected { reason: reason.into() })
+                        .unwrap();
+                } else {
+                    let mut requested = draining.lock().unwrap();
+                    if !*requested {
+                        *requested = true;
+                        update_sender
+                            .send(GeneratorUpdate::DrainStarted {
+                                generators: settings_senders.len(),
+                            })
+                            .unwrap();
+                    }
+                }
             }
             Some(Command::Stop) => {
                 //TODO this is probably not enough any more, we need to stop the gpu executors, cpu threads and rebatchers as well

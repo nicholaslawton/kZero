@@ -4,6 +4,7 @@ use flume::Sender;
 use futures::executor::ThreadPoolBuilder;
 use kn_cuda_sys::wrapper::handle::CudaDevice;
 use rand::rngs::StdRng;
+use std::sync::{Arc, Mutex};
 
 use kz_core::mapping::BoardMapper;
 use kz_core::network::job_channel::job_pair;
@@ -29,6 +30,7 @@ impl<B: AltBoard, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for MuZe
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Sync + Send + Clone + 'static,
         update_sender: Sender<GeneratorUpdate<B>>,
+        _draining: Arc<Mutex<bool>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Self::G>>) {
         assert!(
             !startup.eval_random_symmetries,

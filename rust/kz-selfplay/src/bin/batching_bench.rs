@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clap::Parser;
@@ -127,6 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             mapper,
             fixed.eval_random_symmetries,
             updates.clone(),
+            Arc::new(Mutex::new(false)),
         );
         pool.spawn_ok(async move {
             let _ = Abortable::new(generator, registration).await;

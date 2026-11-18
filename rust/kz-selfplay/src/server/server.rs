@@ -1,8 +1,8 @@
 use std::hash::Hash;
-use std::io::{BufReader, BufWriter, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use board_game::board::{AltBoard, Board};
 use board_game::games::arimaa::ArimaaBoard;
@@ -31,7 +31,7 @@ use kz_util::game::Game;
 
 use crate::server::collector::collector_main;
 use crate::server::commander::{commander_main, read_command};
-use crate::server::protocol::{Command, GeneratorUpdate, Settings, StartupSettings};
+use crate::server::protocol::{Command, GeneratorUpdate, ServerUpdate, Settings, StartupSettings};
 use crate::server::server_alphazero::AlphaZeroSpecialization;
 #[cfg(feature = "muzero")]
 use crate::server::server_muzero::MuZeroSpecialization;
@@ -235,8 +235,8 @@ fn selfplay_start_dispatch_spec_alt<
     startup: StartupSettings,
     start_pos: F,
     mapper: M,
-    reader: BufReader<impl Read + Send>,
-    writer: BufWriter<impl Write + Send>,
+    reader: BufReader<&TcpStream>,
+    writer: BufWriter<&TcpStream>,
 ) {
     if startup.muzero {
         #[cfg(feature = "muzero")]
@@ -277,8 +277,8 @@ fn selfplay_start_dispatch_spec_non_alt<
     startup: StartupSettings,
     start_pos: F,
     mapper: M,
-    reader: BufReader<impl Read + Send>,
-    writer: BufWriter<impl Write + Send>,
+    reader: BufReader<&TcpStream>,
+    writer: BufWriter<&TcpStream>,
 ) {
     if startup.muzero {
         panic!("MuZero only supports alternating boards for now");
@@ -324,6 +324,7 @@ pub trait ZeroSpecialization<B: Board, M: BoardMapper<B> + 'static> {
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Send + Sync + Clone + 'static,
         update_sender: UpdateSender<B>,
+        draining: Arc<Mutex<bool>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Self::G>>);
 
     fn load_graph(&self, path: &str, mapper: M, startup: &StartupSettings) -> Self::G;
@@ -335,8 +336,8 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
     startup: StartupSettings,
     mapper: M,
     start_pos: impl Fn(&mut StdRng) -> B + Send + Sync + Clone + 'static,
-    reader: BufReader<impl Read + Send>,
-    writer: BufWriter<impl Write + Send>,
+    reader: BufReader<&TcpStream>,
+    writer: BufWriter<&TcpStream>,
     spec: Z,
 ) {
     assert!(!devices.is_empty());
@@ -347,19 +348,30 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
     let mut settings_senders = vec![];
     let mut graph_senders: Vec<GraphSender<Z::G>> = vec![];
     let (update_sender, update_receiver) = flume::bounded(total_cpu_threads);
+    let draining = Arc::new(Mutex::new(false));
+    let connection = *reader.get_ref();
 
-    crossbeam::scope(|s| {
+    let mut writer = crossbeam::scope(|s| {
         // spawn per-device threads
         for (device_id, &device) in devices.iter().enumerate() {
             let start_pos = start_pos.clone();
-            let (mut new_settings_senders, mut new_graph_senders) =
-                spec.spawn_device_threads(s, device, device_id, &startup, mapper, start_pos, update_sender.clone());
+            let (mut new_settings_senders, mut new_graph_senders) = spec.spawn_device_threads(
+                s,
+                device,
+                device_id,
+                &startup,
+                mapper,
+                start_pos,
+                update_sender.clone(),
+                draining.clone(),
+            );
             settings_senders.append(&mut new_settings_senders);
             graph_senders.append(&mut new_graph_senders);
         }
 
         // spawn collector
-        s.builder()
+        let collector = s
+            .builder()
             .name("collector".to_string())
             .spawn(move |_| {
                 collector_main(
@@ -379,13 +391,35 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
         s.builder()
             .name("commander".to_string())
             .spawn(move |_| {
-                commander_main(reader, settings_senders, graph_senders, update_sender, |path| {
-                    spec.load_graph(path, mapper, startup)
-                });
+                commander_main(
+                    reader,
+                    settings_senders,
+                    graph_senders,
+                    update_sender,
+                    draining,
+                    startup.max_batch_wait_ms,
+                    startup.muzero,
+                    |path| spec.load_graph(path, mapper, startup),
+                );
             })
             .unwrap();
 
-        // implicitly join all spawned threads
+        match collector.join() {
+            Ok(writer) => Some(writer),
+            Err(_) => {
+                eprintln!("Collector failed; closing the selfplay connection");
+                if let Err(error) = connection.shutdown(Shutdown::Both) {
+                    eprintln!("Failed to close selfplay connection: {error}");
+                }
+                None
+            }
+        }
     })
-    .unwrap();
+    .expect("Selfplay worker failed")
+    .expect("Selfplay collector failed");
+    writer
+        .write_all(serde_json::to_string(&ServerUpdate::Stopped).unwrap().as_bytes())
+        .unwrap();
+    writer.write_all(b"\n").unwrap();
+    writer.flush().unwrap();
 }

@@ -3,6 +3,7 @@ import json
 import os
 import socket
 import time
+from threading import Lock
 from dataclasses import dataclass
 from typing import Union, Optional
 
@@ -97,11 +98,13 @@ class SelfplayClient:
     def __init__(self, port: int):
         self.s = connect_to_selfplay_server(port)
         self.f = self.s.makefile("r")
+        self.send_lock = Lock()
 
     def send(self, message: Union[dict, str]):
         s = json.dumps(message)
         print(f"Sending '{s}'")
-        self.s.send((s + "\n").encode())
+        with self.send_lock:
+            self.s.sendall((s + "\n").encode())
 
     def send_startup_settings(self, settings: StartupSettings):
         self.send({"StartupSettings": settings.as_dict()})
@@ -122,14 +125,20 @@ class SelfplayClient:
     def send_stop(self):
         self.send("Stop")
 
-    def wait_for_file(self) -> int:
+    def send_drain(self):
+        self.send("Drain")
+
+    def wait_for_update(self):
         line = self.f.readline()
         if not line.endswith("\n"):
             raise IOError("Connection closed")
 
         message = json.loads(line)
+        print(f"Received message {message}")
+        return message
+
+    def wait_for_file(self) -> int:
+        message = self.wait_for_update()
         if message == "Stopped":
             raise RuntimeError("Selfplay server stopped")
-
-        print(f"Received message {message}")
         return message["FinishedFile"]["index"]

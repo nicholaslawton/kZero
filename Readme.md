@@ -55,8 +55,7 @@ Much effort was put into optimizing this system:
 
 AlphaZero self-play retains its normal full-batch/job-count thresholds, but also
 executes pending work after `max_batch_wait_ms` (provisionally 100 ms). This avoids
-stalling when too few games remain to fill a batch. It is not a stop/resume
-implementation. A value of `0` restores threshold-only batching for baseline
+stalling when too few games remain to fill a batch. A value of `0` restores threshold-only batching for baseline
 measurements; that mode can stall at low concurrency.
 
 The deadline starts when a job is buffered by an executor, not when it enters the
@@ -169,6 +168,36 @@ Development tests use fake evaluation and do not execute in normal training:
 ```sh
 cargo test -p kz-selfplay --lib server::executor
 ```
+
+#### Draining self-play for a stop
+
+For Oriflambe training started from the workspace, run:
+
+```sh
+nu alpha-oriflambe/train.nu stop --drain
+```
+
+No new games start after the drain request is accepted. Games already in progress
+finish, and the selfplay log reports how many remain. Complete generation files
+are trained normally, including publishing the new network. The remaining partial
+file is saved and continued on the next `start` with compatible self-play settings.
+If draining starts during optimization, it also waits for optimization to finish.
+The usual generation-boundary `stop` and destructive `stop --now` are unchanged.
+Start a new training session after updating the code before using `--drain`;
+already-running processes do not acquire the new behavior.
+
+Drain requires AlphaZero, a nonzero batching deadline, and a session started
+without `--target-gen`. It is not a time guarantee: long games, optimization, or
+inefficient partially filled GPU batches can make a drain take longer than a few
+minutes. Changing the game, game count per generation, search batch size,
+symmetry, or self-play settings before resuming a partial file is rejected.
+
+This is a graceful-stop checkpoint, not crash recovery. An interruption or failed
+drain may leave incomplete or inconsistent files; the stop command reports
+failure instead of confirming success. Inspect both logs and back up the
+experiment before attempting recovery. A partial checkpoint whose data lengths
+do not match, or which coexists with a completed file, is rejected rather than
+truncated. Optimization itself is not checkpointed.
 
 ### Training (Python)
 

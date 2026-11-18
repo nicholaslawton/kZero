@@ -9,6 +9,7 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
 use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 
 use kz_core::mapping::BoardMapper;
 use kz_core::network::common::policy_softmax_temperature_in_place;
@@ -34,6 +35,7 @@ pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
     mapper: M,
     eval_random_symmetries: bool,
     update_sender: UpdateSender<B>,
+    draining: Arc<Mutex<bool>>,
 ) {
     let mut rng = StdRng::from_entropy();
 
@@ -41,16 +43,29 @@ pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
     let mut settings = settings_receiver.recv_async().await.unwrap();
 
     loop {
+        let should_drain = {
+            let drain = draining.lock().unwrap();
+            if !*drain {
+                update_sender
+                    .send(GeneratorUpdate::StartedSimulation { generator_id })
+                    .unwrap();
+            }
+            *drain
+        };
+        if should_drain {
+            update_sender
+                .send(GeneratorUpdate::GeneratorDrained { generator_id })
+                .unwrap();
+            // Retain the inference client until the commander closes settings on final stop.
+            while settings_receiver.recv_async().await.is_ok() {}
+            break;
+        }
         // possibly get new settings
         match settings_receiver.try_recv() {
             Ok(new_settings) => settings = new_settings,
             Err(TryRecvError::Empty) => (),
             Err(TryRecvError::Disconnected) => break,
         }
-
-        update_sender
-            .send(GeneratorUpdate::StartedSimulation { generator_id })
-            .unwrap();
 
         let simulation = generate_simulation(
             generator_id,
