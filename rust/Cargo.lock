@@ -2898,7 +2898,6 @@ dependencies = [
  "bzip2",
  "clap 4.4.5",
  "crossbeam",
- "crossterm 0.27.0",
  "decorum",
  "env_logger",
  "flume",
@@ -2929,7 +2928,6 @@ dependencies = [
  "serde_json",
  "tabled",
  "tar",
- "tui",
  "vampirc-uci",
 ]
 

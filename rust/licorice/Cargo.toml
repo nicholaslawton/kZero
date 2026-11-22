@@ -7,7 +7,6 @@ keywords = ["lichess", "api", "dev"]
 description = "Lichess API. Development version."
 license = "AGPL-3.0-only"
 repository = "https://gitlab.com/hyperchessbotauthor/licorice"
-homepage = "https://gitlab.com/hyperchessbotauthor/licorice"
 documentation = "https://docs.rs/licoricedev/0.1.2"
 readme = "ReadMe.md"
 
