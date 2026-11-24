@@ -56,6 +56,10 @@ pub fn commander_main<B: Board, G>(
                 println!("Switching to dummy network");
                 send_graph_command(Some(NetworkOrDummy::Right(DummyNetwork)));
             }
+            Some(Command::Checkpoint) => {
+                println!("Checkpoint requested");
+                update_sender.send(GeneratorUpdate::Checkpoint).unwrap();
+            }
             Some(Command::Stop) => {
                 //TODO this is probably not enough any more, we need to stop the gpu executors, cpu threads and rebatchers as well
                 update_sender.send(GeneratorUpdate::Stop).unwrap();

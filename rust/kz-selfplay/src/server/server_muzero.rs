@@ -1,6 +1,6 @@
 use board_game::board::AltBoard;
 use crossbeam::thread::Scope;
-use flume::Sender;
+use flume::{Receiver, Sender};
 use futures::executor::ThreadPoolBuilder;
 use kn_cuda_sys::wrapper::handle::CudaDevice;
 use rand::rngs::StdRng;
@@ -10,6 +10,7 @@ use kz_core::network::job_channel::job_pair;
 use kz_core::network::muzero::{MuZeroFusedGraphs, MuZeroGraphs};
 
 use crate::server::executor::{batched_executor_loop, RunCondition};
+use crate::server::game_checkpoint::ResumedGame;
 use crate::server::generator_muzero::generator_muzero_main;
 use crate::server::protocol::{Evals, GeneratorUpdate, Settings, StartupSettings};
 use crate::server::server::{GraphSender, ZeroSpecialization};
@@ -29,6 +30,7 @@ impl<B: AltBoard, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for MuZe
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Sync + Send + Clone + 'static,
         update_sender: Sender<GeneratorUpdate<B>>,
+        _resume_receiver: Receiver<ResumedGame<B>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Self::G>>) {
         assert!(
             !startup.eval_random_symmetries,

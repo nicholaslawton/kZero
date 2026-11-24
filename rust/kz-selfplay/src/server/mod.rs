@@ -9,6 +9,7 @@ mod server_muzero;
 pub mod collector;
 pub mod commander;
 pub mod executor;
+pub mod game_checkpoint;
 
 pub mod generator_alphazero;
 #[cfg(feature = "muzero")]

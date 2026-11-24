@@ -4,6 +4,8 @@ import itertools
 import json
 import os
 import shutil
+import socket
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +29,8 @@ from lib.util import DEVICE, print_param_count, clean_folder, stochastic_round, 
 CHECK_BATCH_SIZE = 2
 SAVE_BATCH_SIZE = 2
 STOP_FLAG_ENV = "STOP_FLAG_PATH"
+CHECKPOINT_FLAG_ENV = "CHECKPOINT_FLAG_PATH"
+CHECKPOINT_DONE_ENV = "CHECKPOINT_DONE_PATH"
 
 
 def stop_requested() -> bool:
@@ -34,6 +38,11 @@ def stop_requested() -> bool:
     if not path:
         return False
     return os.path.exists(path)
+
+
+def checkpoint_requested() -> bool:
+    path = os.environ.get(CHECKPOINT_FLAG_ENV)
+    return bool(path) and os.path.exists(path)
 
 
 @dataclass
@@ -134,6 +143,52 @@ class LoopSettings:
         self.training_path = os.path.join(self.root_path, "training")
         self.tmp_path = os.path.join(self.root_path, "tmp")
 
+    @property
+    def game_checkpoint_path(self) -> str:
+        return os.path.join(self.selfplay_path, "game_checkpoint.json")
+
+    @property
+    def game_checkpoint_config_path(self) -> str:
+        return os.path.join(self.selfplay_path, "game_checkpoint_config.json")
+
+    def game_checkpoint_config(self) -> dict:
+        """Settings that saved in-progress games depend on; they must not change before resuming."""
+        return {
+            "game": self.fixed_settings.game.name,
+            "start_pos": self.fixed_settings.start_pos,
+            "games_per_gen": self.fixed_settings.simulations_per_gen,
+            "selfplay_settings": self.selfplay_settings.as_dict(),
+        }
+
+    def check_game_checkpoint_resumable(self):
+        if not os.path.exists(self.game_checkpoint_path):
+            return
+        try:
+            with open(self.game_checkpoint_config_path) as f:
+                saved = json.load(f)
+        except FileNotFoundError:
+            saved = None
+        if saved != self.game_checkpoint_config():
+            raise ValueError(
+                f"Selfplay settings differ from those of the saved games in {self.game_checkpoint_path}. "
+                f"Restore the previous settings (see {self.game_checkpoint_config_path}), "
+                f"or move the checkpoint away to discard the saved games."
+            )
+
+    def request_game_checkpoint(self, client: 'SelfplayClient'):
+        if self.muzero:
+            raise ValueError("Selfplay checkpoints are only supported for AlphaZero")
+        if self.fixed_settings.start_pos != "default":
+            raise ValueError("Selfplay checkpoints require the default start position")
+
+        tmp = self.game_checkpoint_config_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.game_checkpoint_config(), f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.game_checkpoint_config_path)
+        client.send_checkpoint()
+
     def calc_batch_count_per_gen(self, estimate_moves_per_simulation: float, do_print: bool) -> float:
         positions_in_buffer = self.max_buffer_size
         samples_per_position = float(self.samples_per_position)
@@ -199,6 +254,8 @@ class LoopSettings:
             logger: Logger, plotter: Optional[LogPlotter],
             network: nn.Module,
     ):
+        self.check_game_checkpoint_resumable()
+
         print("Saving current settings")
         os.makedirs(start_gen.train_path, exist_ok=True)
         with open(start_gen.settings_path, "w") as settings_f:
@@ -228,6 +285,22 @@ class LoopSettings:
             initial_onnx_path = self.save_tmp_onnx_network(network, f"network_{start_gen.gi}")
 
         client = SelfplayClient(self.port)
+        monitor_stop = threading.Event()
+        monitor_errors = []
+
+        # The main thread can be blocked waiting for selfplay or training, so watch for checkpoint requests here.
+        def monitor_checkpoint_request():
+            while not monitor_stop.wait(0.5):
+                if checkpoint_requested():
+                    try:
+                        self.request_game_checkpoint(client)
+                    except Exception as e:
+                        monitor_errors.append(e)
+                        client.s.shutdown(socket.SHUT_RDWR)
+                    return
+
+        monitor = threading.Thread(target=monitor_checkpoint_request, name="checkpoint-monitor", daemon=True)
+        checkpointed = False
         try:
             client.send_startup_settings(startup_settings)
             client.send_new_settings(self.selfplay_settings)
@@ -235,6 +308,7 @@ class LoopSettings:
                 client.send_dummy_network()
             else:
                 client.send_new_network(initial_onnx_path)
+            monitor.start()
 
             for gi in itertools.count(start_gen.gi):
                 if plotter is not None:
@@ -246,7 +320,18 @@ class LoopSettings:
 
                 print(f"Waiting for gen {gi} simulations")
                 gen_start = time.perf_counter()
-                actual_gi = client.wait_for_file()
+                update = client.wait_for_update()
+                if "Checkpointed" in update:
+                    saved = update["Checkpointed"]
+                    if saved["index"] != gi:
+                        raise RuntimeError(f"Unexpected checkpoint generation, expected {gi} got {saved['index']}")
+                    print(
+                        f"Selfplay checkpoint saved: generation {gi} with {saved['games']} finished"
+                        f" and {saved['active']} in-progress games"
+                    )
+                    checkpointed = True
+                    break
+                actual_gi = update["FinishedFile"]["index"]
                 logger.log("time", "selfplay", time.perf_counter() - gen_start)
                 assert gi == actual_gi, f"Unexpected finished generation, expected {gi} got {actual_gi}"
 
@@ -310,7 +395,10 @@ class LoopSettings:
                 # PT files are only needed for recent training resumption.
                 gen.cleanup_old_pt_files(gen.gi, keep_count=3)
 
-                # Check for termination condition
+                # Check for termination condition. A requested checkpoint takes precedence: the server will save the
+                # games after this generation, so keep processing files until it confirms.
+                if client.checkpoint_sent or checkpoint_requested():
+                    continue
                 if self.target_gen > 0 and gi >= self.target_gen:
                     print(f"Reached target_gen={self.target_gen}, terminating training")
                     break
@@ -318,7 +406,17 @@ class LoopSettings:
                     print("Stop requested, terminating after completing current generation")
                     break
         finally:
+            monitor_stop.set()
+            if monitor.is_alive():
+                monitor.join()
+            if monitor_errors:
+                raise RuntimeError("Failed to request selfplay checkpoint") from monitor_errors[0]
             client.send_stop()
+
+        if checkpointed:
+            done_path = os.environ.get(CHECKPOINT_DONE_ENV)
+            if done_path:
+                Path(done_path).touch()
 
     def load_start_state(self) -> Tuple['Generation', 'LoopBuffer', Logger, nn.Module]:
         game = self.fixed_settings.game

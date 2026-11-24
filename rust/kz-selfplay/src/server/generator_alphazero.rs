@@ -21,14 +21,16 @@ use kz_util::sequence::zip_eq_exact;
 use kz_util::stable_dirichlet::StableDirichlet;
 
 use crate::move_selector::MoveSelector;
+use crate::server::game_checkpoint::ResumedGame;
 use crate::server::protocol::{Evals, GeneratorUpdate, Settings};
 use crate::server::server::UpdateSender;
-use crate::simulation::{Position, Simulation};
+use crate::simulation::Position;
 
 pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
     generator_id: usize,
     start_pos: impl Fn(&mut StdRng) -> B,
     settings_receiver: Receiver<Settings>,
+    resume_receiver: Receiver<ResumedGame<B>>,
     search_batch_size: usize,
     eval_client: JobClient<PreparedEvalInput<B>, ZeroEvaluation<'static>>,
     mapper: M,
@@ -48,11 +50,26 @@ pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
             Err(TryRecvError::Disconnected) => break,
         }
 
-        update_sender
-            .send(GeneratorUpdate::StartedSimulation { generator_id })
-            .unwrap();
+        // continue a game saved by a previous session first, if any are left
+        let moves = match resume_receiver.try_recv() {
+            Ok(game) => {
+                update_sender
+                    .send(GeneratorUpdate::ResumedSimulation {
+                        generator_id,
+                        saved_id: game.id,
+                    })
+                    .unwrap();
+                game.moves
+            }
+            Err(_) => {
+                update_sender
+                    .send(GeneratorUpdate::StartedSimulation { generator_id })
+                    .unwrap();
+                vec![]
+            }
+        };
 
-        let simulation = generate_simulation(
+        let final_board = generate_simulation(
             generator_id,
             &settings,
             search_batch_size,
@@ -61,14 +78,15 @@ pub async fn generator_alphazero_main<B: Board + Hash, M: BoardMapper<B>>(
             mapper,
             eval_random_symmetries,
             start_pos(&mut rng),
+            &moves,
             &mut rng,
         )
         .await;
 
         update_sender
-            .send(GeneratorUpdate::FinishedSimulation {
+            .send(GeneratorUpdate::FinishedGame {
                 generator_id,
-                simulation,
+                final_board,
             })
             .unwrap();
     }
@@ -85,16 +103,19 @@ async fn generate_simulation<B: Board + Hash, M: BoardMapper<B>>(
     mapper: M,
     eval_random_symmetries: bool,
     start: B,
+    previous_moves: &[B::Move],
     rng: &mut impl Rng,
-) -> Simulation<'static, B> {
+) -> B {
     // create a new cache for every game, to prevent long-term stale values for short games
     // TODO maybe explicitly clear the cache when a new network is loaded instead?
     let mut cache: Cache<B> = LruCache::new(settings.cache_size);
 
-    let mut positions = vec![];
-
     let max_moves = settings.max_game_length.unwrap_or(u64::MAX);
     let mut curr_board = MaxMovesBoard::new(start, max_moves);
+    for &mv in previous_moves {
+        curr_board.play(mv).unwrap();
+    }
+    let mut move_count = previous_moves.len();
 
     while !curr_board.is_done() {
         // determinate search settings
@@ -122,7 +143,7 @@ async fn generate_simulation<B: Board + Hash, M: BoardMapper<B>>(
 
         // pick a move to play
         let move_selector = MoveSelector::new(settings.temperature, settings.zero_temp_move_count);
-        let picked_index = move_selector.select(positions.len() as u32, zero_evaluation.policy.as_ref(), rng);
+        let picked_index = move_selector.select(move_count as u32, zero_evaluation.policy.as_ref(), rng);
         let picked_child = tree[0].children.unwrap().get(picked_index);
         let picked_move = tree[picked_child].last_move.unwrap();
 
@@ -135,10 +156,10 @@ async fn generate_simulation<B: Board + Hash, M: BoardMapper<B>>(
             zero_evaluation,
             net_evaluation,
         };
-        positions.push(position);
 
         // actually play the move
         curr_board.play(picked_move).unwrap();
+        move_count += 1;
 
         // send updates
         // TODO these cached evals are somewhat temporally misaligned with when the evals actually take place,
@@ -148,17 +169,11 @@ async fn generate_simulation<B: Board + Hash, M: BoardMapper<B>>(
             update_sender.send(msg).unwrap();
         }
         update_sender
-            .send(GeneratorUpdate::FinishedMove {
-                generator_id,
-                curr_game_length: positions.len(),
-            })
+            .send(GeneratorUpdate::RecordedMove { generator_id, position })
             .unwrap();
     }
 
-    Simulation {
-        positions,
-        final_board: curr_board.into_inner(),
-    }
+    curr_board.into_inner()
 }
 
 async fn build_tree<B: Board + Hash, M: BoardMapper<B>>(

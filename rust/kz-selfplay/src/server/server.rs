@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -15,6 +16,7 @@ use flume::{Receiver, Sender};
 use itertools::Itertools;
 use kn_cuda_sys::wrapper::handle::CudaDevice;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use kz_core::mapping::arimaa::ArimaaSplitMapper;
 use kz_core::mapping::ataxx::AtaxxStdMapper;
@@ -31,11 +33,13 @@ use kz_util::game::Game;
 
 use crate::server::collector::collector_main;
 use crate::server::commander::{commander_main, read_command};
+use crate::server::game_checkpoint::{self, ResumedGame};
 use crate::server::protocol::{Command, GeneratorUpdate, Settings, StartupSettings};
 use crate::server::server_alphazero::AlphaZeroSpecialization;
 #[cfg(feature = "muzero")]
 use crate::server::server_muzero::MuZeroSpecialization;
 use crate::server::start_pos::{ataxx_start_pos, go_start_pos};
+use crate::simulation::{Position, Simulation};
 
 #[derive(Debug, clap::Parser)]
 struct Args {
@@ -324,6 +328,7 @@ pub trait ZeroSpecialization<B: Board, M: BoardMapper<B> + 'static> {
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Send + Sync + Clone + 'static,
         update_sender: UpdateSender<B>,
+        resume_receiver: Receiver<ResumedGame<B>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Self::G>>);
 
     fn load_graph(&self, path: &str, mapper: M, startup: &StartupSettings) -> Self::G;
@@ -348,12 +353,22 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
     let mut graph_senders: Vec<GraphSender<Z::G>> = vec![];
     let (update_sender, update_receiver) = flume::bounded(total_cpu_threads);
 
+    let (resumed_finished, resumed_pending, resume_receiver) = load_checkpoint(game, startup, mapper, &start_pos);
+
     crossbeam::scope(|s| {
         // spawn per-device threads
         for (device_id, &device) in devices.iter().enumerate() {
             let start_pos = start_pos.clone();
-            let (mut new_settings_senders, mut new_graph_senders) =
-                spec.spawn_device_threads(s, device, device_id, &startup, mapper, start_pos, update_sender.clone());
+            let (mut new_settings_senders, mut new_graph_senders) = spec.spawn_device_threads(
+                s,
+                device,
+                device_id,
+                &startup,
+                mapper,
+                start_pos,
+                update_sender.clone(),
+                resume_receiver.clone(),
+            );
             settings_senders.append(&mut new_settings_senders);
             graph_senders.append(&mut new_graph_senders);
         }
@@ -371,6 +386,8 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
                     &startup.output_folder,
                     mapper,
                     update_receiver,
+                    resumed_finished,
+                    resumed_pending,
                 )
             })
             .unwrap();
@@ -388,4 +405,55 @@ fn selfplay_start<B: Board, M: BoardMapper<B> + 'static, Z: ZeroSpecialization<B
         // implicitly join all spawned threads
     })
     .unwrap();
+}
+
+/// Load games saved by a previous session, queueing the in-progress ones for the generators.
+fn load_checkpoint<B: Board, M: BoardMapper<B>>(
+    game: Game,
+    startup: &StartupSettings,
+    mapper: M,
+    start_pos: impl Fn(&mut StdRng) -> B,
+) -> (
+    Vec<Simulation<'static, B>>,
+    HashMap<usize, Vec<Position<'static, B>>>,
+    Receiver<ResumedGame<B>>,
+) {
+    let (resume_sender, resume_receiver) = flume::unbounded();
+    if !game_checkpoint::checkpoint_path(&startup.output_folder).exists() {
+        return (vec![], HashMap::new(), resume_receiver);
+    }
+
+    assert!(!startup.muzero, "Selfplay checkpoints are only supported for AlphaZero");
+    assert_eq!(
+        startup.start_pos, "default",
+        "Selfplay checkpoints require the default start position"
+    );
+
+    let start = start_pos(&mut StdRng::from_entropy());
+    let loaded = game_checkpoint::load(
+        &startup.output_folder,
+        &game.to_string(),
+        startup.first_gen,
+        &start,
+        mapper,
+    )
+    .unwrap_or_else(|e| panic!("Failed to load selfplay checkpoint: {e}"))
+    .unwrap();
+
+    println!(
+        "Resuming selfplay checkpoint: generation {} with {} finished and {} in-progress games",
+        startup.first_gen,
+        loaded.finished.len(),
+        loaded.active.len()
+    );
+
+    let mut pending = HashMap::new();
+    for (id, positions) in loaded.active.into_iter().enumerate() {
+        let moves = positions.iter().map(|position| position.played_mv).collect();
+        resume_sender.send(ResumedGame { id, moves }).unwrap();
+        pending.insert(id, positions);
+    }
+    game_checkpoint::mark_consumed(&startup.output_folder).expect("Failed to mark selfplay checkpoint as loaded");
+
+    (loaded.finished, pending, resume_receiver)
 }

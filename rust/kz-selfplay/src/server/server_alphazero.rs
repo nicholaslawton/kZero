@@ -3,7 +3,7 @@ use std::hash::Hash;
 
 use board_game::board::Board;
 use crossbeam::thread::Scope;
-use flume::Sender;
+use flume::{Receiver, Sender};
 use futures::executor::ThreadPoolBuilder;
 use kn_cuda_sys::wrapper::handle::CudaDevice;
 use kn_graph::graph::Graph;
@@ -20,6 +20,7 @@ use kz_core::network::ZeroEvaluation;
 use kz_util::math::ceil_div;
 
 use crate::server::executor::{batched_executor_loop, RunCondition};
+use crate::server::game_checkpoint::ResumedGame;
 use crate::server::generator_alphazero::generator_alphazero_main;
 use crate::server::protocol::{Evals, GeneratorUpdate, Settings, StartupSettings};
 use crate::server::server::{GraphSender, ZeroSpecialization};
@@ -39,6 +40,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
         mapper: M,
         start_pos: impl Fn(&mut StdRng) -> B + Send + Sync + Clone + 'static,
         update_sender: Sender<GeneratorUpdate<B>>,
+        resume_receiver: Receiver<ResumedGame<B>>,
     ) -> (Vec<Sender<Settings>>, Vec<GraphSender<Graph>>) {
         let gpu_batch_size = startup.gpu_batch_size;
         let search_batch_size = startup.search_batch_size;
@@ -70,6 +72,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
             let eval_client = eval_client.clone();
             let mapper = mapper;
             let update_sender = update_sender.clone();
+            let resume_receiver = resume_receiver.clone();
             let eval_random_symmetries = startup.eval_random_symmetries;
 
             let (settings_sender, settings_receiver) = flume::bounded(1);
@@ -80,6 +83,7 @@ impl<B: Board + Hash, M: BoardMapper<B> + 'static> ZeroSpecialization<B, M> for 
                     generator_id,
                     start_pos,
                     settings_receiver,
+                    resume_receiver,
                     search_batch_size,
                     eval_client,
                     mapper,

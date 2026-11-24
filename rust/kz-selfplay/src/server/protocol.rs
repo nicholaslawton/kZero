@@ -5,7 +5,7 @@ use kz_core::zero::node::UctWeights;
 use kz_core::zero::step::{FpuMode, QMode};
 
 use crate::server::serde_helper::ToFromStringArg;
-use crate::simulation::Simulation;
+use crate::simulation::{Position, Simulation};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StartupSettings {
@@ -36,6 +36,8 @@ pub enum Command {
     NewNetwork(String),
     WaitForNewNetwork,
     UseDummyNetwork,
+    /// Save completed and in-progress games, then exit.
+    Checkpoint,
     Stop,
 }
 
@@ -52,6 +54,7 @@ pub struct Evals {
 #[derive(Debug)]
 pub enum GeneratorUpdate<B: Board> {
     Stop,
+    Checkpoint,
 
     StartedSimulation {
         generator_id: usize,
@@ -67,6 +70,20 @@ pub enum GeneratorUpdate<B: Board> {
         simulation: Simulation<'static, B>,
     },
 
+    // AlphaZero generators send each committed move to the collector, so it can checkpoint them.
+    ResumedSimulation {
+        generator_id: usize,
+        saved_id: usize,
+    },
+    RecordedMove {
+        generator_id: usize,
+        position: Position<'static, B>,
+    },
+    FinishedGame {
+        generator_id: usize,
+        final_board: B,
+    },
+
     ExpandEvals(Evals),
     RootEvals(Evals),
 }
@@ -76,6 +93,7 @@ pub enum GeneratorUpdate<B: Board> {
 pub enum ServerUpdate {
     Stopped,
     FinishedFile { index: u32 },
+    Checkpointed { index: u32, games: usize, active: usize },
 }
 
 //TODO split this into AlphaZero and MuZero structs, the overlap is getting pretty small
