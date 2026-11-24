@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 # TODO fix all muzero code and remove the feature again
-muzero = []
+muzero = ["dep:serde_json"]
 default = []
 
 [dependencies]
@@ -35,7 +35,7 @@ lazy_static.workspace = true
 ndarray.workspace = true
 rand.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 shakmaty.workspace = true
 shakmaty-syzygy.workspace = true
 
